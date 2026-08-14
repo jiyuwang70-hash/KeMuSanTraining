@@ -1,0 +1,19 @@
+{
+	"FileVersion": 3,
+	"EngineAssociation": "5.7",
+	"Category": "Games",
+	"Description": "科目三路考模拟（KeMuSan Road Test Simulator）——考驾照科目三道路驾驶技能考试模拟游戏",
+	"Modules": [
+		{
+			"Name": "KeMuSanTraining",
+			"Type": "Runtime",
+			"LoadingPhase": "Default"
+		}
+	],
+	"Plugins": [
+		{
+			"Name": "ChaosVehiclesPlugin",
+			"Enabled": true
+		}
+	]
+}

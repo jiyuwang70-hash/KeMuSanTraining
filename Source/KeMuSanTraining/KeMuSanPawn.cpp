@@ -142,10 +142,28 @@ void AKeMuSanPawn::SetupPlayerInputComponent(UInputComponent* PlayerInputCompone
 	PlayerInputComponent->BindAction(TEXT("Observe"), IE_Pressed, this, &AKeMuSanPawn::NotifyHeadCheck);
 }
 
+void AKeMuSanPawn::CycleGearAuto()
+{
+	// P -> R -> N -> D -> P
+	if (Gear == EGear::G1)     { Gear = EGear::N; }         // D->N
+	else if (Gear == EGear::G2) { Gear = EGear::G1; }       // (D alias) stay D
+	else if (Gear == EGear::R)  { Gear = EGear::G1; }       // R->D
+	else if (Gear == EGear::N)  { Gear = EGear::R; }        // N->R
+	else                        { Gear = EGear::N; }
+	bStalled = false;
+}
+
 void AKeMuSanPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
-	UpdatePhysics(DeltaSeconds);
+	if (Transmission == ETransmissionType::Auto)
+	{
+		UpdatePhysicsAuto(DeltaSeconds);
+	}
+	else
+	{
+		UpdatePhysics(DeltaSeconds);
+	}
 	UpdateVisuals(DeltaSeconds);
 }
 
@@ -276,7 +294,20 @@ void AKeMuSanPawn::ForceStop()
 	ThrottleInput = 0.f;
 }
 
+void AKeMuSanPawn::ApplyDebugCamera()
+{
+	SpringArm->TargetArmLength = 5000.f;
+	SpringArm->SetRelativeLocation(FVector(-1000.f, 0.f, 4000.f));
+	SpringArm->SetRelativeRotation(FRotator(-65.f, 0.f, 0.f));
+	Camera->FieldOfView = 75.f;
+}
+
 void AKeMuSanPawn::UpdatePhysics(float DT)
+{
+	UpdatePhysicsManual(DT);
+}
+
+void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 {
 	StallCooldown = FMath::Max(0.f, StallCooldown - DT);
 	if (bFlashHigh)
@@ -366,7 +397,7 @@ void AKeMuSanPawn::UpdatePhysics(float DT)
 	if (bLeftSignal || bRightSignal)
 	{
 		SignalYawAccum += FMath::Abs(YawDeltaDeg);
-		if (SignalYawAccum > 40.f && FMath::Abs(SteeringAngleDeg) < 8.f)
+		if (SignalYawAccum > 55.f && FMath::Abs(SteeringAngleDeg) < 10.f)
 		{
 			bLeftSignal = false;
 			bRightSignal = false;
@@ -385,7 +416,7 @@ void AKeMuSanPawn::UpdatePhysics(float DT)
 	{
 		EngineRpm = 0.f;
 	}
-	else if (Gear == EGear::N)
+	else if (Gear == EGear::N || Gear == EGear::R)
 	{
 		EngineRpm = IdleRpm + ThrottleInput * 1500.f;
 	}
@@ -393,6 +424,123 @@ void AKeMuSanPawn::UpdatePhysics(float DT)
 	{
 		const float Ratio = FMath::Clamp(FMath::Abs(SpeedMs) / FMath::Max(0.1f, FMath::Abs(GearMaxSpeed[GearIdx])), 0.f, 1.f);
 		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.35f + 0.65f * ThrottleInput);
+	}
+}
+
+// Automatic transmission physics: throttle auto-shifts, no stalling, brake/coast auto-downshifts
+void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
+{
+	// No stalling in auto mode
+	bStalled = false;
+	StallCooldown = FMath::Max(0.f, StallCooldown - DT);
+	if (bFlashHigh)
+	{
+		FlashHighTimer -= DT;
+		if (FlashHighTimer <= 0.f) { bFlashHigh = false; }
+	}
+
+	// Auto shift based on speed
+	const float SpdKmh = FMath::Abs(SpeedMs) * 3.6f;
+	if (Gear == EGear::G1 || Gear == EGear::G2 || Gear == EGear::G3 || Gear == EGear::G4 || Gear == EGear::G5)
+	{
+		// Shift before the current gear reaches its modeled speed ceiling.
+		if (ThrottleInput > 0.3f && SpdKmh > 10.f) Gear = EGear::G2;  // 2nd
+		if (ThrottleInput > 0.3f && SpdKmh > 18.f) Gear = EGear::G3;  // 3rd
+		if (ThrottleInput > 0.3f && SpdKmh > 30.f) Gear = EGear::G4;  // 4th
+		if (ThrottleInput > 0.3f && SpdKmh > 42.f) Gear = EGear::G5;  // 5th
+		// Auto downshift when coasting slow
+		if (SpdKmh < 10.f && Gear != EGear::G1 && Gear != EGear::G2)
+		{
+			Gear = EGear::G1;
+		}
+		else if (SpdKmh < 20.f && Gear != EGear::G1 && Gear != EGear::G2)
+		{
+			Gear = EGear::G2;
+		}
+	}
+
+	const int32 GearIdx = static_cast<int32>(Gear);
+	const bool bHasPower = (Gear != EGear::N) && !bStalled;
+
+	// ---- 驱动力 ----
+	if (bHasPower)
+	{
+		const float Sign = (Gear == EGear::R) ? -1.f : 1.f;
+		const float Desired = Sign * GearMaxSpeed[FMath::Clamp(GearIdx, 0, 6)] * (0.15f + 0.85f * ThrottleInput);
+		const int32 AccelIdx = FMath::Clamp(GearIdx, 0, 6);
+		const float MaxStep = GearAccel[AccelIdx] * DT;
+		const float Diff = Desired - SpeedMs;
+		SpeedMs += FMath::Clamp(Diff, -MaxStep, MaxStep);
+	}
+
+	// ---- 刹车 ----
+	if (BrakeInput > 0.f && FMath::Abs(SpeedMs) > 0.01f)
+	{
+		const float Step = BrakeInput * 8.f * DT;
+		SpeedMs = (FMath::Abs(SpeedMs) <= Step) ? 0.f : SpeedMs - FMath::Sign(SpeedMs) * Step;
+	}
+
+	// ---- 手刹 ----
+	if (bHandbrake && FMath::Abs(SpeedMs) > 0.01f)
+	{
+		const float Step = 6.5f * DT;
+		SpeedMs = (FMath::Abs(SpeedMs) <= Step) ? 0.f : SpeedMs - FMath::Sign(SpeedMs) * Step;
+	}
+
+	// ---- 行驶阻力（比手动挡略小，自动挡有液力变矩器辅助）----
+	if (FMath::Abs(SpeedMs) > 0.005f)
+	{
+		const float Resist = (0.10f + 0.0028f * SpeedMs * SpeedMs) * DT;
+		SpeedMs = (FMath::Abs(SpeedMs) <= Resist) ? 0.f : SpeedMs - FMath::Sign(SpeedMs) * Resist;
+	}
+
+	// ---- 转向 ----
+	const float SpeedKmh = FMath::Abs(SpeedMs) * 3.6f;
+	const float MaxSteer = 32.f;
+	const float SpeedFactor = FMath::Clamp(1.f - SpeedKmh / 40.f, 0.18f, 1.f);
+	const float TargetSteer = SteeringInput * MaxSteer * SpeedFactor;
+	const float SteerStep = 130.f * DT;
+	SteeringAngleDeg = FMath::Clamp(TargetSteer, SteeringAngleDeg - SteerStep, SteeringAngleDeg + SteerStep);
+
+	// ---- 运动学 ----
+	const float Wheelbase = 2.6f;
+	const float SteerRad = FMath::DegreesToRadians(SteeringAngleDeg);
+	float YawDeltaDeg = 0.f;
+	if (FMath::Abs(SpeedMs) > 0.01f)
+	{
+		const float YawRate = SpeedMs / Wheelbase * FMath::Tan(SteerRad);
+		YawDeltaDeg = FMath::RadiansToDegrees(YawRate * DT);
+	}
+	YawDeg += YawDeltaDeg;
+
+	const FRotator NewRot(0.f, YawDeg, 0.f);
+	const FVector Fwd = NewRot.Vector();
+	SetActorLocationAndRotation(GetActorLocation() + Fwd * SpeedMs * DT, NewRot, false);
+
+	// ---- 转向灯 ----
+	if (bLeftSignal || bRightSignal)
+	{
+		SignalYawAccum += FMath::Abs(YawDeltaDeg);
+		if (SignalYawAccum > 55.f && FMath::Abs(SteeringAngleDeg) < 10.f)
+		{
+			bLeftSignal = false;
+			bRightSignal = false;
+			SignalYawAccum = 0.f;
+		}
+	}
+	else { SignalYawAccum = 0.f; }
+
+	// ---- 转速 ----
+	const float IdleRpm = 800.f;
+	const float MaxRpm = 5500.f;
+	if (Gear == EGear::N)
+	{
+		EngineRpm = IdleRpm + ThrottleInput * 1200.f;
+	}
+	else
+	{
+		const float Ratio = FMath::Clamp(FMath::Abs(SpeedMs) / FMath::Max(0.1f, FMath::Abs(GearMaxSpeed[FMath::Clamp(GearIdx, 0, 6)])), 0.f, 1.f);
+		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.4f + 0.6f * ThrottleInput);
 	}
 }
 

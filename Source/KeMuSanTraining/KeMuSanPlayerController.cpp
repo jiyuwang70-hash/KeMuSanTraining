@@ -41,6 +41,9 @@ void AKeMuSanPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("Confirm"), IE_Pressed, this, &AKeMuSanPlayerController::ConfirmPressed);
 	InputComponent->BindAction(TEXT("Pause"), IE_Pressed, this, &AKeMuSanPlayerController::PausePressed);
 	InputComponent->BindAction(TEXT("FreePractice"), IE_Pressed, this, &AKeMuSanPlayerController::FreePracticePressed);
+	InputComponent->BindAction(TEXT("ManualExam"), IE_Pressed, this, &AKeMuSanPlayerController::ManualExamPressed);
+	InputComponent->BindAction(TEXT("AutoExam"), IE_Pressed, this, &AKeMuSanPlayerController::AutoExamPressed);
+	InputComponent->BindAction(TEXT("CycleGearAuto"), IE_Pressed, this, &AKeMuSanPlayerController::CycleGearAuto);
 }
 
 void AKeMuSanPlayerController::HandleGearKey(FKey Key)
@@ -104,17 +107,7 @@ void AKeMuSanPlayerController::AnswerKey(int32 Answer)
 void AKeMuSanPlayerController::ConfirmPressed()
 {
 	AKeMuSanGameMode* GM = GetGameMode();
-	if (!GM)
-	{
-		return;
-	}
-	AExamController* EC = GM->GetExamController();
-
-	if (!GM->IsGameStarted())
-	{
-		GM->StartExam();
-		return;
-	}
+	if (!GM) return;
 
 	if (GM->bPaused)
 	{
@@ -122,9 +115,42 @@ void AKeMuSanPlayerController::ConfirmPressed()
 		return;
 	}
 
+	AExamController* EC = GM->GetExamController();
 	if (EC && EC->GetPhase() == EExamPhase::Finished)
 	{
 		GM->RestartGame();
+	}
+}
+
+void AKeMuSanPlayerController::ManualExamPressed()
+{
+	AKeMuSanGameMode* GM = GetGameMode();
+	if (GM && !GM->IsGameStarted())
+	{
+		GM->StartExam(ETransmissionType::Manual);
+	}
+}
+
+void AKeMuSanPlayerController::AutoExamPressed()
+{
+	AKeMuSanGameMode* GM = GetGameMode();
+	if (GM && !GM->IsGameStarted())
+	{
+		GM->StartExam(ETransmissionType::Auto);
+	}
+}
+
+void AKeMuSanPlayerController::CycleGearAuto()
+{
+	if (APawn* P = GetPawn())
+	{
+		if (AKeMuSanPawn* Car = Cast<AKeMuSanPawn>(P))
+		{
+			if (Car->GetTransmissionType() == ETransmissionType::Auto)
+			{
+				Car->CycleGearAuto();
+			}
+		}
 	}
 }
 

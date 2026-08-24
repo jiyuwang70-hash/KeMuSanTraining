@@ -4,6 +4,14 @@
 #include "CoreMinimal.h"
 #include "ExamTypes.generated.h"
 
+// 变速箱类型
+UENUM(BlueprintType)
+enum class ETransmissionType : uint8
+{
+	Manual    UMETA(DisplayName = "手动挡"),
+	Auto      UMETA(DisplayName = "自动挡")
+};
+
 // 考试阶段
 UENUM(BlueprintType)
 enum class EExamPhase : uint8

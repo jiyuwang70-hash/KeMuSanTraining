@@ -89,6 +89,28 @@ KeMuSanTraining/
 - 未做碰撞体：锥桶/路缘石仅作视觉与判分参考，碰撞检测可后续接入 Chaos 物理。
 - 模板地图（VehicleBasic）引用了少量引擎演示资产（如 `/Game/Vehicles/PhysicsMaterials`），首次打开时日志中会出现无害的加载警告，不影响游戏。
 
+## 自动化回归与 CI
+
+交通规则回归可以用固定种子无人值守运行：
+
+```powershell
+PowerShell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\run_traffic_regression.ps1 `
+  -Seed 20260823 `
+  -TimeoutSeconds 90
+```
+
+回归覆盖 `empty`、`crosswalk_yield`、`follow_and_meet`、`full_mix` 四个场景，并断言道路生成、Lit/CSG 显示状态、行人放行、社会车辆让行和截图输出。
+
+仓库提供 `.github/workflows/traffic-regression.yml`。由于 GitHub 托管 runner 不包含 Unreal Engine 5.7，该工作流使用专用 Windows 自托管 runner，要求：
+
+- runner 标签包含 `self-hosted`、`Windows`、`ue-5.7`
+- runner 环境变量 `UE_ROOT` 指向 Unreal Engine 5.7 根目录
+- Visual Studio 2022 C++ 工具链和 Windows SDK 已安装
+- 运行前没有打开的 `UnrealEditor.exe` 实例
+
+工作流在 `main` 推送或手动触发时运行。手动触发可以选择单个场景、固定种子和超时；为避免把不受信任的 PR 代码放到拥有 Unreal 安装的自托管 runner 上，工作流默认不直接响应 `pull_request`。每次运行都会上传 `Saved/Logs` 下的构建/回归日志和 `Saved/Screenshots/WindowsEditor` 下的截图，保留 14 天。
+
 ## License
 
 MIT License，详见 [LICENSE](LICENSE)。

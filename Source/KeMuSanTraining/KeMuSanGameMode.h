@@ -3,6 +3,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/GameModeBase.h"
+#include "ExamTypes.h"
 #include "KeMuSanGameMode.generated.h"
 
 class AController;
@@ -19,19 +20,19 @@ public:
 	virtual void BeginPlay() override;
 	virtual void RestartPlayer(AController* NewPlayer) override;
 
-	// 开始考试模式
+	// Start exam with specified transmission type
 	UFUNCTION(BlueprintCallable, Category = "Exam")
-	void StartExam();
+	void StartExam(ETransmissionType TransType = ETransmissionType::Manual);
 
-	// 开始自由练习模式
+	// Start free practice
 	UFUNCTION(BlueprintCallable, Category = "Exam")
-	void StartFreePractice();
+	void StartFreePractice(ETransmissionType TransType = ETransmissionType::Manual);
 
-	// 重开一局
+	// Restart
 	UFUNCTION(BlueprintCallable, Category = "Exam")
 	void RestartGame();
 
-	// 暂停 / 恢复
+	// Pause
 	UFUNCTION(BlueprintCallable, Category = "Exam")
 	void TogglePause();
 
@@ -50,7 +51,13 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Exam")
 	bool bPaused = false;
 
+	UPROPERTY(BlueprintReadOnly, Category = "Exam")
+	ETransmissionType CurrentTransmission = ETransmissionType::Manual;
+
 protected:
 	UPROPERTY()
 	AExamController* ExamController = nullptr;
+
+	FTimerHandle AutoShotTimer;
+	FTimerHandle TrafficRegressionExitTimer;
 };

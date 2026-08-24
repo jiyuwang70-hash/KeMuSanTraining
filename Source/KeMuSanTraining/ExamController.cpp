@@ -1,11 +1,13 @@
 #include "ExamController.h"
 
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
+#include "TimerManager.h"
 
 #include "KeMuSanPawn.h"
 #include "RoadBuilder.h"
-#include "RoadLayout.h"
 #include "TrafficActors.h"
 #include "BeepSynth.h"
 
@@ -20,14 +22,64 @@ void AExamController::BeginPlay()
 {
 	Super::BeginPlay();
 
+	bAutoTest = FParse::Param(FCommandLine::Get(), TEXT("autotest"));
+
+	// PIE can inherit editor debug view flags. Apply presentation defaults early,
+	// then keep a short guard active while the PIE viewport finishes initializing.
+	ApplyPresentationDefaults(TEXT("BeginPlay"));
+	StartPresentationGuard();
+
+	// 自动测试：12 秒后切换到绝对位置俯瞰相机，验证世界渲染是否正常
+	if (bAutoTest)
+	{
+		FTimerHandle AbsCamHandle;
+		GetWorld()->GetTimerManager().SetTimer(AbsCamHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
+		{
+			APlayerController* PC = GetWorld()->GetFirstPlayerController();
+			if (!PC || !GetWorld())
+			{
+				return;
+			}
+			FActorSpawnParameters Params;
+			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			ACameraActor* Cam = GetWorld()->SpawnActor<ACameraActor>(FVector(150.f, 0.f, 22.f), FRotator(-15.f, 0.f, 0.f), Params);
+			if (Cam)
+			{
+				if (UCameraComponent* CC = Cast<UCameraComponent>(Cam->FindComponentByClass(UCameraComponent::StaticClass())))
+				{
+					CC->FieldOfView = 95.f;
+				}
+				PC->SetViewTargetWithBlend(Cam, 0.f);
+				ApplyPresentationDefaults(TEXT("AutotestCamera"));
+				StartPresentationGuard();
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSan] absolute camera activated"));
+			}
+		}), 12.f, false);
+	}
+
 	FActorSpawnParameters Params;
 	Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
 
-	RoadBuilder = GetWorld()->SpawnActor<ARoadBuilder>(RouteOffset, FRotator::ZeroRotator, Params);
-	TrafficLightActor = GetWorld()->SpawnActor<ATrafficLight>(RouteOffset + FVector(StopLineX + 0.5f, 6.6f, 0.f), FRotator::ZeroRotator, Params);
-	MeetingCar = GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
-	SlowCar = GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
-	Pedestrian = GetWorld()->SpawnActor<APedestrian>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	RoadBuilder = GetWorld()->SpawnActor<ARoadBuilder>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (RoadBuilder)
+	{
+		Track = RoadBuilder->GetTrack();
+	}
+
+	Traffic = GetWorld()->SpawnActor<ATrafficManager>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
+	if (Traffic && Track)
+	{
+		Traffic->Setup(Track);
+	}
+
+	// 信号灯：位于信号路口停止线右侧
+	TrafficLightActor = GetWorld()->SpawnActor<ATrafficLight>(FVector(161.f, 6.9f, 0.f), FRotator(0.f, 180.f, 0.f), Params);
+
+	Pedestrian = GetWorld()->SpawnActor<APedestrian>(FVector(0.f, 0.f, -100.f), FRotator::ZeroRotator, Params);
+	if (Traffic)
+	{
+		Traffic->SetPedestrian(Pedestrian);
+	}
 	Beeper = GetWorld()->SpawnActor<ABeeper>(FVector::ZeroVector, FRotator::ZeroRotator, Params);
 
 	BuildLightPool();
@@ -44,6 +96,9 @@ void AExamController::BeginExam(bool bIsExam)
 	Deductions.Reset();
 	bFailIssued = false;
 	ResultLine.Empty();
+	// The editor can re-apply Wireframe/CSG overlays when PIE enters the exam.
+	ApplyPresentationDefaults(TEXT("BeginExam"));
+	StartPresentationGuard();
 
 	for (FZoneStatus& Z : ZoneStatuses)
 	{
@@ -75,7 +130,10 @@ void AExamController::BeginExam(bool bIsExam)
 	bIntersectionEntered = false;
 	bCrosswalkPedFail = false;
 	bCrosswalkSpeedCharged = false;
+	bCrosswalkYieldCharged = false;
 	bPedStarted = false;
+
+	bMeetingCarSpawned = false;
 
 	bOvertakePassed = false;
 	bOvertakeSignalUsed = false;
@@ -84,12 +142,15 @@ void AExamController::BeginExam(bool bIsExam)
 	bOvertakeReturnSignal = false;
 
 	bUTurnEntered = false;
+	UTurnYawRef = 180.f;
 	UTurnDeltaMin = 0.f;
-	UTurnDeltaNeg = 0.f;
+	UTurnDeltaMax = 0.f;
 	bUTurnSignalUsed = false;
 	bUTurnObserved = false;
 	bUTurnSpeedCharged = false;
 	bUTurnEvaluated = false;
+	bUTurnArc1Done = false;
+	bUTurnStraightDone = false;
 
 	GearShiftStage = 0;
 	LastGearForShift = 0;
@@ -109,26 +170,24 @@ void AExamController::BeginExam(bool bIsExam)
 	CenterlineTime = 0.f;
 	SeatbeltOffTime = 0.f;
 	bRoadEndCharged = false;
+	RoadEndTimer = 0.f;
 
 	// 场景复位
 	if (TrafficLightActor)
 	{
 		TrafficLightActor->ResetLight();
 	}
-	if (MeetingCar)
+	if (Traffic)
 	{
-		MeetingCar->InitRoute(RouteOffset + FVector(330.f, -1.75f, 0.25f), RouteOffset + FVector(235.f, -1.75f, 0.25f), 18.f);
-	}
-	if (SlowCar)
-	{
-		SlowCar->InitRoute(RouteOffset + FVector(302.f, 1.75f, 0.25f), RouteOffset + FVector(352.f, 1.75f, 0.25f), 12.f);
+		Traffic->SetActive(true);
+		Traffic->ResetTraffic();
 	}
 	if (Pedestrian)
 	{
 		Pedestrian->StopCrossing();
 	}
 
-	// 考试车复位
+	// 考试车复位到起点
 	if (!Car)
 	{
 		if (APlayerController* PC = GetWorld()->GetFirstPlayerController())
@@ -138,16 +197,22 @@ void AExamController::BeginExam(bool bIsExam)
 	}
 	if (Car)
 	{
-		const FVector StartLoc = RouteOffset + FVector(StartX, RightLaneY, 1.f);
-		Car->ResetVehicle(StartLoc, FRotator(0.f, 0.f, 0.f));
+		Car->ResetVehicle(StartPose, FRotator(0.f, 0.f, 0.f));
 	}
 
-	StartCarX = Car ? CarX() : 0.f;
-	PrevCarX = StartCarX;
-	bPrevXValid = true;
+	StartS = S_Start;
+	CurS = StartS;
+	PrevS = StartS;
+	CurLat = LaneWidth * 0.5f;
+	bCurOnReturn = false;
+	bCurAligned = true;
 
 	SetPhase(EExamPhase::Prep);
-	UE_LOG(LogTemp, Log, TEXT("[KeMuSan] BeginExam mode=%s score=%d"), bIsExam ? TEXT("考试") : TEXT("练习"), Score);
+	{
+		const FString ModeText = bIsExam ? FString(TEXT("考试")) : FString(TEXT("练习"));
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSan] BeginExam mode=%s score=%d autotest=%d cmdline=%s"),
+			*ModeText, Score, bAutoTest ? 1 : 0, FCommandLine::Get());
+	}
 	if (Beeper)
 	{
 		Beeper->PlayDing();
@@ -159,9 +224,110 @@ void AExamController::OnPauseChanged(bool bInPaused)
 	bPaused = bInPaused;
 }
 
+void AExamController::ApplyPresentationDefaults(const TCHAR* Context)
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	APlayerController* PC = GetWorld()->GetFirstPlayerController();
+	if (!PC)
+	{
+		return;
+	}
+
+	// BSP/Brush flags are independent of Wireframe, so turn off every editor
+	// diagnostic overlay that can make the playable view look like CSG lines.
+	const TCHAR* Commands[] =
+	{
+		TEXT("viewmode lit"),
+		TEXT("showflag.Game 1"),
+		TEXT("showflag.Materials 1"),
+		TEXT("showflag.Lighting 1"),
+		TEXT("showflag.Wireframe 0"),
+		TEXT("showflag.BSP 0"),
+		TEXT("showflag.BSPTriangles 0"),
+		TEXT("showflag.BSPSplit 0"),
+		TEXT("showflag.Brushes 0"),
+		TEXT("showflag.BuilderBrush 0"),
+		TEXT("showflag.MeshEdges 0"),
+		TEXT("showflag.Collision 0"),
+		TEXT("showflag.CollisionVisibility 0"),
+		TEXT("showflag.CollisionPawn 0"),
+		TEXT("showflag.Bounds 0"),
+		TEXT("showflag.Navigation 0"),
+		TEXT("showflag.GameplayDebug 0"),
+		TEXT("showflag.ServerDrawDebug 0"),
+		TEXT("showflag.ModeWidgets 0"),
+		TEXT("showflag.Pivot 0"),
+		TEXT("showflag.HitProxies 0"),
+		TEXT("showflag.Splines 0"),
+		TEXT("showflag.Selection 0"),
+		TEXT("showflag.Editor 0")
+	};
+
+	for (const TCHAR* Command : Commands)
+	{
+		PC->ConsoleCommand(Command, true);
+	}
+
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSan] presentation defaults applied: %s"), Context ? Context : TEXT("unknown"));
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSanTraffic] presentation_state view=Lit Wireframe=0 BSP=0 BSPTriangles=0 BSPSplit=0 Brushes=0 BuilderBrush=0 Collision=0 Bounds=0"));
+	bPresentationDefaultsApplied = true;
+}
+
+void AExamController::StartPresentationGuard()
+{
+	if (!GetWorld())
+	{
+		return;
+	}
+
+	ViewModeFixAttempts = 0;
+	GetWorld()->GetTimerManager().ClearTimer(ViewModeFixTimer);
+	GetWorld()->GetTimerManager().SetTimer(ViewModeFixTimer, FTimerDelegate::CreateWeakLambda(this, [this]()
+	{
+		ApplyPresentationDefaults(TEXT("Guard"));
+		++ViewModeFixAttempts;
+		if (ViewModeFixAttempts >= 24 && GetWorld())
+		{
+			GetWorld()->GetTimerManager().ClearTimer(ViewModeFixTimer);
+		}
+	}), 0.15f, true, 0.05f);
+}
+
+float AExamController::GetProgress01() const
+{
+	if (!Track || Track->TotalLength() <= 1.f)
+	{
+		return 0.f;
+	}
+	return FMath::Clamp(CurS / Track->TotalLength(), 0.f, 1.f);
+}
+
 void AExamController::Tick(float DeltaSeconds)
 {
+	if (!bPresentationDefaultsApplied && GetWorld()->GetFirstPlayerController())
+	{
+		ApplyPresentationDefaults(TEXT("FirstTick"));
+		StartPresentationGuard();
+	}
 	Super::Tick(DeltaSeconds);
+
+	// 诊断：前几帧与每120帧输出一次状态
+	{
+		static int32 DiagCount = 0;
+		++DiagCount;
+		if (DiagCount <= 5 || DiagCount % 120 == 0)
+		{
+			APlayerController* DiagPC = GetWorld()->GetFirstPlayerController();
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSan] tick#%d phase=%d paused=%d pc=%d pawn=%d auto=%d track=%d S=%.1f"),
+				DiagCount, static_cast<int32>(Phase), bPaused ? 1 : 0,
+				DiagPC ? 1 : 0, (DiagPC && DiagPC->GetPawn()) ? 1 : 0,
+				bAutoTest ? 1 : 0, Track ? 1 : 0, CurS);
+		}
+	}
 
 	if (bPaused)
 	{
@@ -179,6 +345,9 @@ void AExamController::Tick(float DeltaSeconds)
 			return;
 		}
 	}
+
+	UpdateProjection();
+	SyncTrafficState();
 
 	switch (Phase)
 	{
@@ -206,7 +375,23 @@ void AExamController::Tick(float DeltaSeconds)
 		MonitorGeneral(DeltaSeconds);
 	}
 
-	PrevCarX = CarX();
+	if (bAutoTest && Phase != EExamPhase::Menu && Phase != EExamPhase::Finished)
+	{
+		UpdateAutoDrive(DeltaSeconds);
+
+		// 自动测试状态日志
+		static float LogTimer = 0.f;
+		LogTimer += DeltaSeconds;
+		if (LogTimer > 2.f)
+		{
+			LogTimer = 0.f;
+			const FVector Loc = Car->GetActorLocation();
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSan] auto S=%.1f lat=%.2f spd=%.1f pos=(%.0f,%.0f) ret=%d aligned=%d"),
+				CurS, CurLat, Car->GetSpeedKmh(), Loc.X, Loc.Y, bCurOnReturn ? 1 : 0, bCurAligned ? 1 : 0);
+		}
+	}
+
+	PrevS = CurS;
 }
 
 // ---------------------------------------------------------------------------
@@ -370,12 +555,61 @@ float AExamController::GetTrafficLightRemaining() const
 }
 
 // ---------------------------------------------------------------------------
+// 路线投影 / 交通状态同步
+// ---------------------------------------------------------------------------
+void AExamController::SyncTrafficState()
+{
+	if (!Traffic || !Car)
+	{
+		return;
+	}
+	Traffic->UpdatePlayer(
+		Car->GetActorLocation(),
+		Car->GetActorRotation().Vector(),
+		CurS,
+		bCurOnReturn,
+		CarSpeedKmh(),
+		CarSpeedKmh() < 0.8f,
+		GetTrafficLightState(),
+		GetTrafficLightRemaining(),
+		Pedestrian && Pedestrian->IsWaiting(),
+		Pedestrian && Pedestrian->IsCrossing());
+}
+
+void AExamController::UpdateProjection()
+{
+	if (!Car || !Track)
+	{
+		bProjValid = false;
+		return;
+	}
+	const FVector Heading = Car->GetActorRotation().Vector();
+	const FRouteTrack::FProjResult P = Track->Project(Car->GetActorLocation(), Heading);
+	{
+		static int32 ProjDiag = 0;
+		if (++ProjDiag <= 8)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSan] proj pos=(%.1f,%.1f) -> S=%.2f lat=%.2f ret=%d aligned=%d samples=%d"),
+				Car->GetActorLocation().X, Car->GetActorLocation().Y, P.S, P.Lateral, P.bReturn ? 1 : 0, P.bAligned ? 1 : 0, Track->Num());
+		}
+	}
+
+	PrevS = CurS;
+	CurS = P.S;
+	CurLat = P.Lateral;
+	CurDistSq = P.DistSq;
+	bCurOnReturn = P.bReturn;
+	bCurAligned = P.bAligned;
+	bProjValid = true;
+}
+
+// ---------------------------------------------------------------------------
 // 各阶段更新
 // ---------------------------------------------------------------------------
 void AExamController::UpdatePrep(float DT)
 {
 	MarkZoneByName(TEXT("上车准备"), 1);
-	SetPrompt(TEXT("上车准备：系好安全带（F）、观察左右后视镜（M）、拉紧手刹（空格）"));
+	SetPrompt(TEXT("上车准备：按F系安全带 → 按M观察后视镜 → 按空格拉紧手刹"));
 
 	if (!bPrepSeatbeltOk && Car->IsSeatbeltOn())
 	{
@@ -403,7 +637,7 @@ void AExamController::UpdatePrep(float DT)
 			else
 			{
 				SetPhase(EExamPhase::Ready);
-				SetPrompt(TEXT("自由练习：请平稳起步"));
+				SetPrompt(TEXT("自由练习：W油门起步，A/D转向，1挂1挡，空格松手刹"));
 			}
 		}
 	}
@@ -421,9 +655,8 @@ void AExamController::UpdateLightTest(float DT)
 		{
 			MarkZoneByName(TEXT("灯光模拟"), 2);
 			SetPhase(EExamPhase::Ready);
-			StartCarX = CarX();
-			PrevCarX = CarX();
-			SetPrompt(TEXT("灯光考试通过！请起步：开左转向灯（Q）、观察（M）、松手刹、挂1挡、平稳起步"));
+			StartS = S_Start;
+			SetPrompt(TEXT("灯光通过！起步：Q左转灯 → M观察 → 按空格松手刹 → 按1挂1挡 → W油门起步"));
 			if (Beeper)
 			{
 				Beeper->PlayDoubleDing();
@@ -513,13 +746,13 @@ void AExamController::UpdateReady(float DT)
 	}
 
 	// 起步后溜
-	if (CarX() < StartCarX - 0.35f)
+	if (bCurAligned && !bCurOnReturn && CurS < StartS - 0.35f)
 	{
 		FailExam(TEXT("起步时车辆后溜超过30厘米"));
 		return;
 	}
 
-	if (CarX() > StartCarX + 12.f)
+	if (bCurAligned && CurS > S_ReadyEnd)
 	{
 		if (IsExamScoring())
 		{
@@ -544,44 +777,41 @@ void AExamController::UpdateReady(float DT)
 
 void AExamController::UpdateDriving(float DT)
 {
-	const float X = CarX();
-	const bool HeadingMinus = IsHeadingMinusX();
-
 	TickStraight(DT);
 	TickLaneChange(DT);
 	TickIntersection(DT);
 	TickSchoolBus(DT);
-
-	// 会车（仅提示）
-	if (!HeadingMinus && X >= MeetingStartX && X <= MeetingEndX)
-	{
-		MarkZone(9, 1);
-		SetPrompt(TEXT("会车：前方来车，请靠右行驶，注意观察"));
-	}
-	else if (!HeadingMinus && X > MeetingEndX)
-	{
-		MarkZone(9, 2);
-	}
-
+	TickMeeting(DT);
 	TickOvertake(DT);
 	TickGearShift(DT);
 	TickUTurn(DT);
 
-	// 行人触发
-	if (!bPedStarted && !HeadingMinus && X > 90.f && Pedestrian)
+	// 行人触发（接近人行横道时开始过街，触发点距离斑马线约25m）
+	if (!bPedStarted && bCurAligned && !bCurOnReturn && CurS > CrosswalkS - 25.f && Pedestrian)
 	{
 		bPedStarted = true;
-		Pedestrian->StartCrossing(RouteOffset + FVector(CrosswalkX, 9.f, 0.f), RouteOffset + FVector(CrosswalkX, -9.f, 0.f), 1.2f);
+		// 先在路缘等待，由 TrafficManager 按安全距离放行。
+		const float PedX = 164.f;
+		Pedestrian->PrepareCrossing(FVector(PedX, 9.f, 0.f), FVector(PedX, -9.f, 0.f), 1.8f);
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanTraffic] pedestrian_prepare crosswalk_s=%.1f player_s=%.1f"), CrosswalkS, CurS);
+		SyncTrafficState();
+		SetPrompt(TEXT("前方有行人候过街：减速停车，确认行人通过后再起步"));
 	}
 
-	// 掉头后触发靠边停车
+	// 红灯等待时放行横向车流
+	if (Traffic)
+	{
+		const bool bApproaching = bCurAligned && !bCurOnReturn && CurS > 148.f && CurS < 178.f;
+		Traffic->NotifyLightRed(bApproaching && GetTrafficLightState() == 0);
+	}
+
+	// 掉头完成后触发靠边停车
 	TickPullOverTrigger(DT);
 }
 
 void AExamController::TickStraight(float DT)
 {
-	const float X = CarX();
-	if (X < StraightStartX || X > StraightEndX || IsHeadingMinusX())
+	if (!bCurAligned || bCurOnReturn || CurS < StraightStartS || CurS > StraightEndS)
 	{
 		return;
 	}
@@ -591,7 +821,7 @@ void AExamController::TickStraight(float DT)
 	{
 		bStraightInit = true;
 		StraightRefYaw = CarYawDeg();
-		StraightRefY = CarY();
+		StraightRefLat = CurLat;
 		SetPrompt(TEXT("直线行驶：保持车辆直线行驶，方向稳定"));
 		if (Beeper)
 		{
@@ -600,8 +830,8 @@ void AExamController::TickStraight(float DT)
 	}
 
 	const float Dev = FMath::Abs(FMath::UnwindDegrees(CarYawDeg() - StraightRefYaw));
-	const float YDev = FMath::Abs(CarY() - StraightRefY);
-	if (Dev > 3.2f || YDev > 0.45f)
+	const float LatDev = FMath::Abs(CurLat - StraightRefLat);
+	if (Dev > 3.2f || LatDev > 0.45f)
 	{
 		StraightBadTime += DT;
 	}
@@ -614,29 +844,30 @@ void AExamController::TickStraight(float DT)
 	{
 		FailExam(TEXT("直线行驶方向控制不稳"));
 	}
+	else if (CurS > StraightEndS - 1.f)
+	{
+		MarkZone(3, 2);
+	}
 }
 
 void AExamController::TickLaneChange(float DT)
 {
-	const float X = CarX();
-	const float Y = CarY();
-	if (X < LaneChangeStartX || X > LaneChangeEndX || IsHeadingMinusX())
+	if (!bCurAligned || bCurOnReturn || CurS < LaneChangeStartS || CurS > LaneChangeEndS)
 	{
 		return;
 	}
 
 	MarkZone(4, 1);
 
-	if (LaneChangeStage == 0 && X < LaneChangeMidX)
+	if (LaneChangeStage == 0 && CurS < LaneChangeMidS)
 	{
 		SetPrompt(TEXT("变更车道：开启左转向灯（Q），观察（M）后向左变更车道"));
 	}
-	else if (LaneChangeStage == 0 && X >= LaneChangeMidX)
+	else if (LaneChangeStage == 0 && CurS >= LaneChangeMidS)
 	{
 		SetPrompt(TEXT("变更车道：开启右转向灯（E），观察（M）后向右变更回原车道"));
 	}
 
-	// 转向灯持续计时
 	if (Car->IsLeftSignalOn() || Car->IsRightSignalOn())
 	{
 		LaneChangeSignalTime += DT;
@@ -646,9 +877,9 @@ void AExamController::TickLaneChange(float DT)
 		LaneChangeSignalTime = 0.f;
 	}
 
-	if (LaneChangeStage == 0 && Y < -0.2f)
+	if (LaneChangeStage == 0 && CurLat < -1.0f)
 	{
-		// 变到左道
+		// 变到左道（车道宽3.5m，右道中心+1.75，左道中心-1.75，进入左道需偏移<-1.0）
 		if (IsExamScoring())
 		{
 			if (!Car->IsLeftSignalOn())
@@ -668,7 +899,7 @@ void AExamController::TickLaneChange(float DT)
 		bLaneChangeCrossed = true;
 		LaneChangeSignalTime = 0.f;
 	}
-	else if (LaneChangeStage == 1 && Y > -0.2f && bLaneChangeCrossed)
+	else			if (LaneChangeStage == 1 && CurLat > 1.0f && bLaneChangeCrossed)
 	{
 		// 变回右道
 		if (IsExamScoring())
@@ -691,7 +922,7 @@ void AExamController::TickLaneChange(float DT)
 		LaneChangeSignalTime = 0.f;
 	}
 
-	if (X > LaneChangeEndX - 2.f)
+	if (CurS > LaneChangeEndS - 2.f)
 	{
 		if (IsExamScoring() && LaneChangeStage < 2)
 		{
@@ -703,13 +934,13 @@ void AExamController::TickLaneChange(float DT)
 
 void AExamController::TickIntersection(float DT)
 {
-	if (IsHeadingMinusX())
+	if (!bCurAligned || bCurOnReturn)
 	{
 		return;
 	}
 
 	// 停止线判定（红 / 黄灯）
-	if (!bStopLineCrossed && PrevCarX < StopLineX && CarX() >= StopLineX)
+	if (!bStopLineCrossed && PrevS < StopLineS && CurS >= StopLineS)
 	{
 		bStopLineCrossed = true;
 		const int32 S = GetTrafficLightState();
@@ -727,7 +958,7 @@ void AExamController::TickIntersection(float DT)
 	}
 
 	// 进入路口
-	if (!bIntersectionEntered && PrevCarX < IntersectionMinX && CarX() >= IntersectionMinX)
+	if (!bIntersectionEntered && PrevS < IntersectionMinS && CurS >= IntersectionMinS)
 	{
 		bIntersectionEntered = true;
 		if (IsExamScoring() && CarSpeedKmh() > IntersectionLimit)
@@ -738,25 +969,42 @@ void AExamController::TickIntersection(float DT)
 	}
 
 	// 人行横道
-	const float X = CarX();
-	if (X >= CrosswalkX - 2.5f && X <= CrosswalkX + 2.5f)
+	if (CurS >= CrosswalkS - 2.5f && CurS <= CrosswalkS + 2.5f)
 	{
 		MarkZone(6, 1);
+		SetPrompt(TEXT("前方通过人行横道：减速慢行，注意让行行人"));
 		if (IsExamScoring())
 		{
+			if (!bCrosswalkYieldCharged && Pedestrian &&
+				(Pedestrian->IsWaiting() || Pedestrian->IsCrossing()) &&
+				CarSpeedKmh() > 1.2f)
+			{
+				bCrosswalkYieldCharged = true;
+				AddDeduction(20, TEXT("人行横道有行人优先通行时未停车让行"));
+			}
 			if (!bCrosswalkSpeedCharged && CarSpeedKmh() > ZoneLimit)
 			{
 				bCrosswalkSpeedCharged = true;
 				AddDeduction(10, TEXT("通过人行横道未减速"));
 			}
-			if (!bCrosswalkPedFail && Pedestrian && Pedestrian->IsOnRoad(CrosswalkX, RoadHalfWidth) && CarSpeedKmh() > 5.f)
+			// 行人在路面上时必须停车让行；仅经过减速但未停稳也记一次。
+			if (!bCrosswalkYieldCharged && Pedestrian && Pedestrian->IsOnRoad(164.f, RoadHalfWidth))
+			{
+				bCrosswalkYieldCharged = true;
+				if (CarSpeedKmh() > 1.2f)
+				{
+					AddDeduction(20, TEXT("人行横道遇行人未停车让行"));
+				}
+			}
+			// 车辆与行人的实际接触仍然是直接不合格。
+			if (!bCrosswalkPedFail && Pedestrian && Pedestrian->IsOnRoad(164.f, RoadHalfWidth) && CarSpeedKmh() > 5.f)
 			{
 				bCrosswalkPedFail = true;
 				FailExam(TEXT("人行横道遇行人未停车让行"));
 			}
 		}
 	}
-	else if (X > CrosswalkX + 2.5f)
+	else if (CurS > CrosswalkS + 2.5f)
 	{
 		MarkZone(6, 2);
 	}
@@ -764,13 +1012,12 @@ void AExamController::TickIntersection(float DT)
 
 void AExamController::TickSchoolBus(float DT)
 {
-	if (IsHeadingMinusX())
+	if (!bCurAligned || bCurOnReturn)
 	{
 		return;
 	}
-	const float X = CarX();
 
-	if (X >= SchoolStartX && X <= SchoolEndX)
+	if (CurS >= SchoolStartS && CurS <= SchoolEndS)
 	{
 		MarkZone(7, 1);
 		SetPrompt(TEXT("通过学校区域：减速至30km/h以下，注意观察"));
@@ -779,12 +1026,12 @@ void AExamController::TickSchoolBus(float DT)
 			FailExam(TEXT("通过学校区域未减速慢行"));
 		}
 	}
-	else if (X > SchoolEndX)
+	else if (CurS > SchoolEndS)
 	{
 		MarkZone(7, 2);
 	}
 
-	if (X >= BusStartX && X <= BusEndX)
+	if (CurS >= BusStartS && CurS <= BusEndS)
 	{
 		MarkZone(8, 1);
 		SetPrompt(TEXT("通过公交车站：减速至30km/h以下，注意观察"));
@@ -793,20 +1040,38 @@ void AExamController::TickSchoolBus(float DT)
 			FailExam(TEXT("通过公交车站未减速慢行"));
 		}
 	}
-	else if (X > BusEndX)
+	else if (CurS > BusEndS)
 	{
 		MarkZone(8, 2);
 	}
 }
 
-void AExamController::TickOvertake(float DT)
+void AExamController::TickMeeting(float DT)
 {
-	if (IsHeadingMinusX())
+	if (!bCurAligned || bCurOnReturn || CurS < MeetingStartS || CurS > MeetingEndS + 6.f)
 	{
 		return;
 	}
-	const float X = CarX();
-	if (X < OvertakeStartX || X > OvertakeEndX)
+
+	MarkZone(9, 1);
+	SetPrompt(TEXT("会车：前方对向来车，请靠右行驶并注意横向安全距离"));
+
+	// 进入会车区生成对向来车
+	if (!bMeetingCarSpawned && Traffic && CurS > MeetingStartS + 4.f)
+	{
+		bMeetingCarSpawned = true;
+		Traffic->SpawnMeetingCar(CurS);
+	}
+
+	if (CurS > MeetingEndS + 4.f)
+	{
+		MarkZone(9, 2);
+	}
+}
+
+void AExamController::TickOvertake(float DT)
+{
+	if (!bCurAligned || bCurOnReturn || CurS < OvertakeStartS || CurS > OvertakeEndS)
 	{
 		return;
 	}
@@ -827,28 +1092,32 @@ void AExamController::TickOvertake(float DT)
 		bOvertakeObserved = true;
 	}
 
-	if (!bOvertakePassed && SlowCar && SlowCar->IsActive())
+	// 生成前方低速车
+	if (Traffic && !Traffic->IsSlowCarActive() && !bOvertakePassed)
 	{
-		const float SlowX = LocalX(SlowCar->GetCarLocation());
-		if (X > SlowX + 4.f)
+		Traffic->SpawnSlowCar(CurS);
+	}
+
+	if (Traffic && !bOvertakePassed && Traffic->IsSlowCarActive())
+	{
+		const float SlowS = Traffic->GetSlowCarS();
+		if (SlowS > 0.f && CurS > SlowS + 4.f)
 		{
 			bOvertakePassed = true;
 			if (IsExamScoring())
 			{
-				if (CarY() > -0.5f)
+			if (CurLat > -0.7f)
+			{
+				FailExam(TEXT("从右侧超车"));
+				return;
+			}
+			if (!bOvertakeSignalUsed)
 				{
-					FailExam(TEXT("从右侧超车"));
+					AddDeduction(10, TEXT("超车未开启左转向灯"));
 				}
-				else
+				if (!bOvertakeObserved)
 				{
-					if (!bOvertakeSignalUsed)
-					{
-						AddDeduction(10, TEXT("超车未开启左转向灯"));
-					}
-					if (!bOvertakeObserved)
-					{
-						AddDeduction(10, TEXT("超车前未观察后方交通情况"));
-					}
+					AddDeduction(10, TEXT("超车前未观察后方交通情况"));
 				}
 			}
 			SetPrompt(TEXT("超车完成：开启右转向灯（E），驶回原车道"));
@@ -861,14 +1130,15 @@ void AExamController::TickOvertake(float DT)
 		{
 			bOvertakeReturnSignal = true;
 		}
-		if (bOvertakeReturnSignal && CarY() > -0.2f)
+		if (bOvertakeReturnSignal && CurLat > -0.2f)
 		{
 			MarkZone(10, 2);
 		}
 	}
-	if (X > OvertakeEndX - 1.f && ZoneStatuses.IsValidIndex(10) && ZoneStatuses[10].State < 2)
+
+	if (CurS > OvertakeEndS - 1.f)
 	{
-		if (IsExamScoring())
+		if (IsExamScoring() && ZoneStatuses.IsValidIndex(10) && ZoneStatuses[10].State < 2)
 		{
 			if (!bOvertakePassed)
 			{
@@ -878,7 +1148,7 @@ void AExamController::TickOvertake(float DT)
 			{
 				AddDeduction(10, TEXT("超车后未开启右转向灯"));
 			}
-			if (bOvertakePassed && CarY() < -0.2f)
+			if (bOvertakePassed && CurLat < -0.2f)
 			{
 				AddDeduction(10, TEXT("超车后未驶回原车道"));
 			}
@@ -889,12 +1159,7 @@ void AExamController::TickOvertake(float DT)
 
 void AExamController::TickGearShift(float DT)
 {
-	if (IsHeadingMinusX())
-	{
-		return;
-	}
-	const float X = CarX();
-	if (X < GearStartX || X > GearEndX)
+	if (!bCurAligned || bCurOnReturn || CurS < GearStartS || CurS > GearEndS)
 	{
 		return;
 	}
@@ -903,12 +1168,11 @@ void AExamController::TickGearShift(float DT)
 
 	const int32 GearIdx = static_cast<int32>(Car->GetGear());
 
-	// 越级换挡检测
-	if (GearIdx != LastGearForShift && IsExamScoring() && !bGearJumpCharged)
+	// 越级换挡检测（使用挡位号：G1=2,G2=3,G3=4,G4=5,G5=6）
+	if (GearIdx != LastGearForShift && IsExamScoring() && !bGearJumpCharged && LastGearForShift >= 2)
 	{
-		const bool bJumpUp = (LastGearForShift >= 2 && LastGearForShift <= 3 && GearIdx >= 5);   // 2/3 -> 4/5
-		const bool bJumpDown = (LastGearForShift >= 5 && GearIdx <= 3);                           // 4/5 -> 1/2
-		if (bJumpUp || bJumpDown)
+		const int32 Jump = FMath::Abs(GearIdx - LastGearForShift);
+		if (Jump >= 2)
 		{
 			bGearJumpCharged = true;
 			AddDeduction(10, TEXT("越级换挡"));
@@ -919,7 +1183,14 @@ void AExamController::TickGearShift(float DT)
 	if (GearShiftStage == 0)
 	{
 		SetPrompt(TEXT("加减挡操作：逐级加挡至4挡"));
-		if (GearIdx >= 5) // 4挡
+		// Skip for auto transmission
+		if (IsAutoTransmission())
+		{
+			GearShiftStage = 2;
+			MarkZone(11, 2);
+			SetPrompt(TEXT("加减挡操作完成（自动挡）"));
+		}
+		else if (GearIdx >= static_cast<int32>(EGear::G4)) // 4挡（idx=5）
 		{
 			GearShiftStage = 1;
 			SetPrompt(TEXT("加减挡操作：逐级减挡至2挡"));
@@ -927,15 +1198,15 @@ void AExamController::TickGearShift(float DT)
 	}
 	else if (GearShiftStage == 1)
 	{
-		if (GearIdx <= 3) // 2挡
+		if (GearIdx <= static_cast<int32>(EGear::G2)) // 2挡（idx=3）
 		{
 			GearShiftStage = 2;
 			MarkZone(11, 2);
-			SetPrompt(TEXT("加减挡完成"));
+			SetPrompt(TEXT("加减挡操作完成"));
 		}
 	}
 
-	if (X > GearEndX - 1.f)
+	if (CurS > GearEndS - 1.f)
 	{
 		if (IsExamScoring() && GearShiftStage < 2)
 		{
@@ -947,15 +1218,13 @@ void AExamController::TickGearShift(float DT)
 
 void AExamController::TickUTurn(float DT)
 {
-	const float X = CarX();
-	const bool HeadingMinus = IsHeadingMinusX();
-
-	if (!bUTurnEntered && X >= UTurnStartX && !HeadingMinus)
+	// 掉头入口（西段西行方向，S=980）
+	if (!bUTurnEntered && bCurAligned && !bCurOnReturn && CurS >= UTurnEntryS)
 	{
 		bUTurnEntered = true;
 		UTurnYawRef = CarYawDeg();
 		UTurnDeltaMin = 0.f;
-		UTurnDeltaNeg = 0.f;
+		UTurnDeltaMax = 0.f;
 		SetPrompt(TEXT("掉头：开启左转向灯（Q），观察（M），减速后在掉头区掉头"));
 		if (Beeper)
 		{
@@ -963,7 +1232,7 @@ void AExamController::TickUTurn(float DT)
 		}
 	}
 
-	if (!bUTurnEntered)
+	if (!bUTurnEntered || bUTurnEvaluated)
 	{
 		return;
 	}
@@ -979,53 +1248,63 @@ void AExamController::TickUTurn(float DT)
 		bUTurnObserved = true;
 	}
 
-	if (X <= UTurnStartX + 4.f && !bUTurnSpeedCharged && CarSpeedKmh() > ZoneLimit + 1.f)
+	// 自动挡：简单完成判定
+
+	if (!bUTurnSpeedCharged && bCurAligned && !bCurOnReturn && CurS < UTurnEntryS + 8.f && CarSpeedKmh() > UTurnLimit + 1.f)
 	{
 		bUTurnSpeedCharged = true;
 		AddDeduction(10, TEXT("掉头前未减速"));
 	}
 
+	// 记录转向累计（负值 = 左转）
 	const float Delta = FMath::UnwindDegrees(CarYawDeg() - UTurnYawRef);
-	if (Delta > 0.f)
-	{
-		UTurnDeltaMin = FMath::Max(UTurnDeltaMin, Delta);
-	}
-	else
-	{
-		UTurnDeltaNeg = FMath::Min(UTurnDeltaNeg, Delta);
-	}
+	UTurnDeltaMin = FMath::Min(UTurnDeltaMin, Delta);
+	UTurnDeltaMax = FMath::Max(UTurnDeltaMax, Delta);
 
-	if (!bUTurnEvaluated && HeadingMinus && (FMath::Abs(Delta) > 150.f || X < UTurnStartX - 2.f))
+	auto EvaluateUTurn = [&]()
 	{
 		bUTurnEvaluated = true;
 		if (IsExamScoring())
 		{
-			if (UTurnDeltaNeg < -120.f)
+			if (UTurnDeltaMax > 120.f)
 			{
-				FailExam(TEXT("未按指定方向掉头"));
+				FailExam(TEXT("未按指定方向掉头（向右掉头）"));
+				return;
 			}
-			else
+			if (UTurnDeltaMin > -140.f)
 			{
-				if (UTurnDeltaMin < 140.f)
-				{
-					AddDeduction(10, TEXT("未按规定完成掉头"));
-				}
-				if (!bUTurnSignalUsed)
-				{
-					AddDeduction(10, TEXT("掉头未开启左转向灯"));
-				}
-				if (!bUTurnObserved)
-				{
-					AddDeduction(10, TEXT("掉头未观察后方交通情况"));
-				}
+				AddDeduction(10, TEXT("未按规定完成掉头"));
+			}
+			if (!bUTurnSignalUsed)
+			{
+				AddDeduction(10, TEXT("掉头未开启左转向灯"));
+			}
+			if (!bUTurnObserved)
+			{
+				AddDeduction(10, TEXT("掉头未观察后方交通情况"));
 			}
 		}
 		MarkZone(12, 2);
-		SetPrompt(TEXT("掉头完成：沿右侧车道行驶"));
+		SetPrompt(TEXT("掉头完成：沿返回车道行驶，准备靠边停车"));
+	};
+	if (IsAutoTransmission())
+	{
+		if (bCurOnReturn && bCurAligned && CurS >= UTurnCompleteS - 10.f)
+		{
+			EvaluateUTurn();
+			return;
+		}
 	}
 
-	// 越过掉头区仍未掉头
-	if (!bUTurnEvaluated && !HeadingMinus && X > UTurnEndX + 10.f)
+	// 完成判定：投影落到返回支线且车头与返回段一致
+	if (bCurOnReturn && bCurAligned && FMath::Abs(CurLat) < RoadHalfWidth)
+	{
+		EvaluateUTurn();
+		return;
+	}
+
+	// 驶过 U-turn 终点区域仍未掉头
+	if (!bUTurnEvaluated && bCurAligned && !bCurOnReturn && CurS > UTurnCompleteS + 40.f)
 	{
 		bUTurnEvaluated = true;
 		AddDeduction(10, TEXT("未在掉头区完成掉头"));
@@ -1039,7 +1318,8 @@ void AExamController::TickPullOverTrigger(float DT)
 	{
 		return;
 	}
-	if (IsHeadingMinusX() && CarX() < PullOverStartX)
+	// 使用 S 坐标判断靠边停车区
+	if (bUTurnEvaluated && bCurOnReturn && bCurAligned && CurS >= PullOverEnterS)
 	{
 		SetPhase(EExamPhase::PullOver);
 		SetPrompt(TEXT("靠边停车：开启右转向灯（E），观察（M），减速后靠右停车"));
@@ -1053,10 +1333,8 @@ void AExamController::TickPullOverTrigger(float DT)
 
 void AExamController::UpdatePullOver(float DT)
 {
-	const float X = CarX();
-
 	// 停车区外继续行驶 -> 未按规定地点停车
-	if (IsExamScoring() && X < PullOverEndX && !bPullOverStopped && CarSpeedKmh() > 1.f)
+	if (IsExamScoring() && !bPullOverStopped && CarSpeedKmh() > 1.f && CurS > PullOverFailS)
 	{
 		FailExam(TEXT("未在规定区域内停车"));
 		return;
@@ -1084,25 +1362,26 @@ void AExamController::UpdatePullOver(float DT)
 	if (!bPullOverStopped && PullOverStopTime > 0.9f)
 	{
 		bPullOverStopped = true;
-		if (IsExamScoring() && X < PullOverEndX - 1.f)
-		{
-			FailExam(TEXT("未在规定区域内停车"));
-			return;
-		}
-		PullOverGap = (CarY() - CarHalfWidth) - CurbYHeadingMinusX;
 		if (IsExamScoring())
 		{
+			if (CurS < PullOverMinS - 2.f || CurS > PullOverMaxS + 2.f)
+			{
+				FailExam(TEXT("未在规定区域内停车"));
+				return;
+			}
+			// 车身距路缘石距离：gap = 3.7 - 横向位置
+			PullOverGap = PullOverGapBase - CurLat;
 			if (PullOverGap < -0.02f)
 			{
 				FailExam(TEXT("靠边停车时车轮压路缘石"));
 				return;
 			}
-			else if (PullOverGap > 0.50f)
+			if (PullOverGap > 0.50f)
 			{
 				FailExam(TEXT("停车后车身距路缘石超过50厘米"));
 				return;
 			}
-			else if (PullOverGap > 0.30f)
+			if (PullOverGap > 0.30f)
 			{
 				AddDeduction(10, TEXT("停车后车身距路缘石超过30厘米"));
 			}
@@ -1142,7 +1421,7 @@ void AExamController::UpdatePullOver(float DT)
 
 void AExamController::MonitorGeneral(float DT)
 {
-	if (!Car)
+	if (!Car || !Track)
 	{
 		return;
 	}
@@ -1150,9 +1429,26 @@ void AExamController::MonitorGeneral(float DT)
 	if (IsExamScoring())
 	{
 		const float Spd = CarSpeedKmh();
-		const float X = CarX();
-		const float Y = CarY();
-		const bool HeadingMinus = IsHeadingMinusX();
+
+		// 与机动车、行人或自行车发生碰撞 -> 不合格
+		if (Phase == EExamPhase::Driving || Phase == EExamPhase::PullOver)
+		{
+			if (Traffic && Traffic->HitsPlayer(Car->GetActorLocation(), CarYawDeg()))
+			{
+				FailExam(TEXT("与机动车发生碰撞"));
+				return;
+			}
+			if (Traffic && Traffic->HitsPedestrian(Car->GetActorLocation()))
+			{
+				FailExam(TEXT("与过街行人发生碰撞"));
+				return;
+			}
+			if (Traffic && Traffic->HitsBicycle(Car->GetActorLocation(), CarYawDeg()))
+			{
+				FailExam(TEXT("与非机动车发生碰撞"));
+				return;
+			}
+		}
 
 		// 超速
 		if (Spd > GeneralLimit + 0.5f)
@@ -1161,15 +1457,14 @@ void AExamController::MonitorGeneral(float DT)
 			return;
 		}
 
-		// 骑轧车道中心分界线（变更车道区与掉头区除外）
+		// 骑轧车道中心分界线（变更车道区、转角、掉头区除外）
 		const bool bLegalZone =
-			(X >= LaneChangeStartX && X <= LaneChangeEndX + 2.f) ||
-			(X >= UTurnStartX - 4.f && X <= UTurnEndX + 4.f);
-		bool bViolate = false;
-		if (!bLegalZone)
-		{
-			bViolate = HeadingMinus ? (Y > -0.15f) : (Y < 0.15f);
-		}
+			(CurS >= LaneChangeStartS && CurS <= LaneChangeEndS + 2.f) ||
+			(CurS >= CornerBStartS && CurS <= CornerBEndS) ||
+			(CurS >= CornerCStartS && CurS <= CornerCEndS) ||
+			(CurS >= UTurnEntryS - 12.f && CurS <= UTurnCompleteS + 20.f) ||
+			bCurOnReturn;
+		bool bViolate = bCurAligned && !bLegalZone && FMath::Abs(CurLat) < 0.15f;
 		if (bViolate)
 		{
 			CenterlineTime += DT;
@@ -1214,34 +1509,43 @@ void AExamController::MonitorGeneral(float DT)
 			HandbrakeDriveTimer = FMath::Min(0.f, HandbrakeDriveTimer + DT);
 		}
 
-		// 熄火
-		if (Car->IsStalled() && !bStallFlagged)
+		// 熄火（自动挡不检测）
+		if (!IsAutoTransmission())
 		{
-			bStallFlagged = true;
-			AddDeduction(10, TEXT("车辆熄火"));
-		}
-		if (!Car->IsStalled())
-		{
-			bStallFlagged = false;
+			if (Car->IsStalled() && !bStallFlagged)
+			{
+				bStallFlagged = true;
+				AddDeduction(10, TEXT("车辆熄火"));
+			}
+			if (!Car->IsStalled())
+			{
+				bStallFlagged = false;
+			}
 		}
 
-		// 驶出路面
-		if (FMath::Abs(Y) > 8.5f)
+		// 驶出路面（离中心线过远或完全脱离路网）
+		const bool bOffRoad = CurDistSq > 64.f ||
+			(bCurAligned && FMath::Abs(CurLat) > CurbDistance + 1.0f);
+		if (bOffRoad)
 		{
 			FailExam(TEXT("驶出路面"));
 			return;
 		}
 
-		// 越过路线终点（未掉头）
-		if (!HeadingMinus && X > RoadEndX - 8.f)
+		// 返回段尽头未停车
+		if (bCurOnReturn && CurS > RoadEndS)
 		{
+			RoadEndTimer += DT;
 			if (!bRoadEndCharged)
 			{
 				bRoadEndCharged = true;
-				AddDeduction(10, TEXT("未在掉头区掉头，驶向路线终点"));
+				SetPrompt(TEXT("已到达路线尽头！请立即靠边停车，否则判不合格"));
 			}
-			Car->ForceStop();
-			SetPrompt(TEXT("请在掉头区掉头！挂倒挡（R）或掉头返回"));
+			if (RoadEndTimer > 5.f)
+			{
+				FailExam(TEXT("未在规定区域内停车"));
+				return;
+			}
 		}
 	}
 
@@ -1255,31 +1559,118 @@ void AExamController::MonitorGeneral(float DT)
 }
 
 // ---------------------------------------------------------------------------
+// 自动驾驶（仅 -autotest 截图验证使用）
+// ---------------------------------------------------------------------------
+void AExamController::UpdateAutoDrive(float DT)
+{
+	if (!Car || !Track)
+	{
+		return;
+	}
+
+	switch (Phase)
+	{
+	case EExamPhase::Prep:
+		if (!Car->IsSeatbeltOn())
+		{
+			Car->ToggleSeatbelt();
+		}
+		Car->NotifyHeadCheck();
+		break;
+
+	case EExamPhase::LightTest:
+	{
+		const FLightQuestion* Q = GetCurrentLightQuestion();
+		if (Q)
+		{
+			SubmitLightAnswer(Q->CorrectAnswer);
+		}
+		break;
+	}
+
+	case EExamPhase::Ready:
+	case EExamPhase::Driving:
+	case EExamPhase::PullOver:
+	{
+		if (Car->IsHandbrakeOn())
+		{
+			Car->ToggleHandbrake();
+		}
+		if (Car->GetGear() == EGear::N)
+		{
+			Car->SelectGear(static_cast<int32>(EGear::G1));
+		}
+		if (!Car->IsSeatbeltOn())
+		{
+			Car->ToggleSeatbelt();
+		}
+
+		// 目标：沿主线右侧车道行驶（前视点跟随）
+		float TargetS = CurS + 16.f;
+		float TargetLat = LaneWidth * 0.5f;
+		if (bCurOnReturn)
+		{
+			TargetS = FMath::Min(CurS + 16.f, Track->TotalLength() - 4.f);
+			TargetLat = LaneWidth * 0.5f;
+		}
+
+		const FVector TargetPos = Track->LocAtS(TargetS, TargetLat);
+		const FVector ToTarget = TargetPos - Car->GetActorLocation();
+		const float TargetYaw = FMath::RadiansToDegrees(FMath::Atan2(ToTarget.Y, ToTarget.X));
+		float YawErr = FMath::UnwindDegrees(TargetYaw - CarYawDeg());
+		// 横向纠偏
+		const float LatErr = TargetLat - CurLat;
+		YawErr += FMath::Clamp(LatErr * 8.f, -25.f, 25.f);
+
+		AutoSteerSmooth = FMath::FInterpTo(AutoSteerSmooth, FMath::Clamp(YawErr * 0.05f, -0.65f, 0.65f), DT, 4.f);
+		Car->AxisSteer(AutoSteerSmooth);
+		const bool bPedestrianYield = Pedestrian &&
+			(Pedestrian->IsWaiting() || Pedestrian->IsOnRoad(164.f, RoadHalfWidth)) &&
+			!bCurOnReturn && CurS > CrosswalkS - 42.f && CurS < CrosswalkS + 14.f;
+		if (bPedestrianYield)
+		{
+			// 自动测试也遵守“先停车让行，再通过”的规则。
+			Car->AxisThrottle(0.f);
+			Car->AxisBrake(1.f);
+		}
+		else
+		{
+			Car->AxisThrottle(0.55f);
+			Car->AxisBrake(FMath::Abs(YawErr) > 55.f ? 0.5f : 0.f);
+		}
+
+		// 依速度换挡
+		const float Kmh = Car->GetSpeedKmh();
+		int32 WantGear;
+		// The manual-mode autotest driver must shift below each gear's speed ceiling.
+		if (Kmh < 10.f)      WantGear = static_cast<int32>(EGear::G1);
+		else if (Kmh < 18.f) WantGear = static_cast<int32>(EGear::G2);
+		else if (Kmh < 30.f) WantGear = static_cast<int32>(EGear::G3);
+		else if (Kmh < 42.f) WantGear = static_cast<int32>(EGear::G4);
+		else                 WantGear = static_cast<int32>(EGear::G5);
+		if (static_cast<int32>(Car->GetGear()) != WantGear && Car->GetGear() != EGear::N)
+		{
+			Car->SelectGear(WantGear);
+		}
+		break;
+	}
+
+	default:
+		break;
+	}
+}
+
+// ---------------------------------------------------------------------------
 // 工具
 // ---------------------------------------------------------------------------
-float AExamController::CarX() const
-{
-	return Car ? Car->GetActorLocation().X - RouteOffset.X : 0.f;
-}
-
-float AExamController::CarY() const
-{
-	return Car ? Car->GetActorLocation().Y - RouteOffset.Y : 0.f;
-}
-
-float AExamController::CarYawDeg() const
-{
-	return Car ? Car->GetYawDeg() : 0.f;
-}
-
 float AExamController::CarSpeedKmh() const
 {
 	return Car ? Car->GetSpeedKmh() : 0.f;
 }
 
-bool AExamController::IsHeadingMinusX() const
+float AExamController::CarYawDeg() const
 {
-	return FMath::Abs(FMath::UnwindDegrees(CarYawDeg())) > 90.f;
+	return Car ? Car->GetYawDeg() : 0.f;
 }
 
 bool AExamController::HeadCheckedRecently(float Seconds) const
@@ -1289,9 +1680,4 @@ bool AExamController::HeadCheckedRecently(float Seconds) const
 		return false;
 	}
 	return (GetWorld()->GetTimeSeconds() - Car->GetLastHeadCheckTime()) < Seconds;
-}
-
-float AExamController::LocalX(const FVector& WorldLoc) const
-{
-	return WorldLoc.X - RouteOffset.X;
 }

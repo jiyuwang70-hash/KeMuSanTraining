@@ -1,4 +1,4 @@
-// 科目三考试车 Pawn：手动挡运动学车辆 + 灯光/信号/安全带/手刹
+// 科目三考试车 Pawn：手动挡 / 自动挡运动学车辆 + 灯光/信号/安全带/手刹
 #pragma once
 
 #include "CoreMinimal.h"
@@ -22,6 +22,10 @@ public:
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
+	// ---- 变速箱模式 ----
+	void SetTransmission(ETransmissionType InType) { Transmission = InType; }
+	ETransmissionType GetTransmissionType() const { return Transmission; }
+
 	// ---- 输入（由按键调用） ----
 	void AxisThrottle(float V);
 	void AxisBrake(float V);
@@ -38,6 +42,7 @@ public:
 	void ReleaseHorn();
 	void NotifyHeadCheck();
 	void SelectGear(int32 GearIndex); // 0=N 1=R 2..6=1..5挡
+	void CycleGearAuto();  // P/R/N/D cycle for auto
 
 	// ---- 状态查询 ----
 	float GetSpeedMs() const { return SpeedMs; }
@@ -68,7 +73,13 @@ public:
 	// 强制停车（驶出路线终点时）
 	void ForceStop();
 
+	// 调试俯视视角（自动测试用）
+	void ApplyDebugCamera();
+
 protected:
+	// ---- 变速箱 ----
+	ETransmissionType Transmission = ETransmissionType::Manual;
+
 	// ---- 视觉组件 ----
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	USceneComponent* Root = nullptr;
@@ -153,5 +164,7 @@ protected:
 	float FlashHighTimer = 0.f;
 
 	void UpdatePhysics(float DT);
+	void UpdatePhysicsManual(float DT);
+	void UpdatePhysicsAuto(float DT);
 	void UpdateVisuals(float DT);
 };

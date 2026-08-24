@@ -1,0 +1,174 @@
+name: Unreal Traffic Regression
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/traffic-regression.yml'
+      - 'Config/**'
+      - 'Content/**'
+      - 'Source/**'
+      - 'scripts/**'
+      - '*.uproject'
+  workflow_dispatch:
+    inputs:
+      scenario:
+        description: 'Traffic scenario to run'
+        required: true
+        type: choice
+        default: all
+        options:
+          - all
+          - empty
+          - crosswalk_yield
+          - follow_and_meet
+          - full_mix
+      seed:
+        description: 'Deterministic traffic seed'
+        required: true
+        default: '20260823'
+        type: string
+      timeout_seconds:
+        description: 'Per-scenario timeout in seconds'
+        required: true
+        default: '90'
+        type: string
+
+concurrency:
+  group: ue-traffic-regression-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  traffic-regression:
+    name: UE 5.7 traffic regression
+    runs-on: [self-hosted, Windows, ue-5.7]
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate Unreal runner
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          if ([string]::IsNullOrWhiteSpace($env:UE_ROOT)) {
+            throw 'UE_ROOT is not configured on this self-hosted runner.'
+          }
+
+          $editor = Join-Path $env:UE_ROOT 'Engine\Binaries\Win64\UnrealEditor.exe'
+          $ubt = Join-Path $env:UE_ROOT 'Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe'
+          $project = Join-Path $env:GITHUB_WORKSPACE 'KeMuSanTraining.uproject'
+          foreach ($path in @($editor, $ubt, $project)) {
+            if (-not (Test-Path -LiteralPath $path)) {
+              throw "Required path does not exist: $path"
+            }
+          }
+
+          $editorProcesses = @(Get-Process -Name UnrealEditor -ErrorAction SilentlyContinue)
+          if ($editorProcesses.Count -gt 0) {
+            throw 'UnrealEditor is already running on the self-hosted runner; close it before CI.'
+          }
+
+          Write-Host "UE_ROOT=$env:UE_ROOT"
+          Write-Host "UnrealEditor=$editor"
+          Write-Host "Project=$project"
+
+      - name: Clean generated regression outputs
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $saved = Join-Path $env:GITHUB_WORKSPACE 'Saved'
+          $paths = @(
+            (Join-Path $saved 'Logs\ci-*.log'),
+            (Join-Path $saved 'Logs\traffic-regression-*.log'),
+            (Join-Path $saved 'Logs\traffic-regression-*.stdout'),
+            (Join-Path $saved 'Logs\traffic-regression-*.stderr'),
+            (Join-Path $saved 'Logs\KeMuSanTraining.log'),
+            (Join-Path $saved 'Screenshots\WindowsEditor\*.png')
+          )
+          foreach ($pattern in $paths) {
+            Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+              Remove-Item -Force -ErrorAction SilentlyContinue
+          }
+
+      - name: Build game target
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $env:GITHUB_WORKSPACE 'KeMuSanTraining.uproject'
+          $ubt = Join-Path $env:UE_ROOT 'Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe'
+          $logDir = Join-Path $env:GITHUB_WORKSPACE 'Saved\Logs'
+          New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+          $log = Join-Path $logDir 'ci-build-game.log'
+          $ubtArgs = @('KeMuSanTraining', 'Win64', 'Development', $project, '-NoHotReload', '-WaitMutex')
+
+          & $ubt @ubtArgs 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "Game target build failed with exit code $exitCode. See $log"
+          }
+
+      - name: Build editor target
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $project = Join-Path $env:GITHUB_WORKSPACE 'KeMuSanTraining.uproject'
+          $ubt = Join-Path $env:UE_ROOT 'Engine\Binaries\DotNET\UnrealBuildTool\UnrealBuildTool.exe'
+          $logDir = Join-Path $env:GITHUB_WORKSPACE 'Saved\Logs'
+          New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+          $log = Join-Path $logDir 'ci-build-editor.log'
+          $ubtArgs = @('KeMuSanTrainingEditor', 'Win64', 'Development', $project, '-NoHotReload', '-WaitMutex')
+
+          & $ubt @ubtArgs 2>&1 | Tee-Object -FilePath $log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "Editor target build failed with exit code $exitCode. See $log"
+          }
+
+      - name: Run traffic regression
+        shell: powershell
+        env:
+          REGRESSION_SCENARIO: ${{ github.event.inputs.scenario || 'all' }}
+          REGRESSION_SEED: ${{ github.event.inputs.seed || '20260823' }}
+          REGRESSION_TIMEOUT: ${{ github.event.inputs.timeout_seconds || '90' }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $script = Join-Path $env:GITHUB_WORKSPACE 'scripts\run_traffic_regression.ps1'
+          $summary = Join-Path $env:GITHUB_WORKSPACE 'Saved\Logs\ci-traffic-regression.log'
+          $scriptArgs = @(
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-File', $script,
+            '-Seed', ([int]$env:REGRESSION_SEED),
+            '-TimeoutSeconds', ([int]$env:REGRESSION_TIMEOUT)
+          )
+
+          if ($env:REGRESSION_SCENARIO -ne 'all') {
+            $scriptArgs += @('-Scenario', $env:REGRESSION_SCENARIO)
+          }
+
+          & powershell.exe @scriptArgs 2>&1 | Tee-Object -FilePath $summary
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            throw "Traffic regression failed with exit code $exitCode. See $summary and Saved/Logs/traffic-regression-*.log"
+          }
+
+      - name: Upload regression artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: traffic-regression-${{ github.run_id }}
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            Saved/Logs/ci-*.log
+            Saved/Logs/traffic-regression-*.log
+            Saved/Logs/traffic-regression-*.stdout
+            Saved/Logs/traffic-regression-*.stderr
+            Saved/Logs/KeMuSanTraining.log
+            Saved/Screenshots/WindowsEditor/*.png

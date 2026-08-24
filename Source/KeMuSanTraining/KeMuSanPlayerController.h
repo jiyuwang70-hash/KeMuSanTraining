@@ -33,6 +33,9 @@ public:
 	void ConfirmPressed();
 	void PausePressed();
 	void FreePracticePressed();
+	void ManualExamPressed();   // F1
+	void AutoExamPressed();     // F2
+	void CycleGearAuto();       // Tab (auto transmission only)
 
 	AKeMuSanGameMode* GetGameMode() const;
 	AExamController* GetExamController() const;

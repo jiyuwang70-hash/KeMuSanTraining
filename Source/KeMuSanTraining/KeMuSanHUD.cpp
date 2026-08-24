@@ -21,14 +21,11 @@ namespace
 	const FLinearColor ColGray(0.6f, 0.6f, 0.65f);
 	const FLinearColor ColCyan(0.35f, 0.85f, 1.f);
 
-	// 半透明填充矩形（UCanvas 已无 DrawRect，GWhiteTexture 不再对外导出）
+	// Filled rectangle using GWhiteTexture (works in PIE, unlike DefaultTexture)
 	void DrawFilledRect(UCanvas* Canvas, float X, float Y, float W, float H, const FLinearColor& Color)
 	{
-		if (!Canvas || !Canvas->DefaultTexture || !Canvas->DefaultTexture->GetResource())
-		{
-			return;
-		}
-		FCanvasTileItem Item(FVector2D(X, Y), Canvas->DefaultTexture->GetResource(), FVector2D(W, H), Color);
+		if (!Canvas) return;
+		FCanvasTileItem Item(FVector2D(X, Y), FVector2D(W, H), Color);
 		Item.BlendMode = SE_BLEND_Translucent;
 		Canvas->DrawItem(Item);
 	}
@@ -60,7 +57,10 @@ void AKeMuSanHUD::DrawTextShadowed(const FString& Text, float X, float Y, float 
 	{
 		return;
 	}
-	Canvas->DrawText(Font, *Text, X + 2.f, Y + 2.f, Scale, Scale, FFontRenderInfo());
+	// Draw shadow: dark, slight offset, translucent
+	Canvas->SetLinearDrawColor(FLinearColor(0.f, 0.f, 0.f, 0.7f));
+	Canvas->DrawText(Font, *Text, X + 1.f, Y + 1.f, Scale, Scale, FFontRenderInfo());
+	// Draw foreground
 	Canvas->SetLinearDrawColor(Color);
 	Canvas->DrawText(Font, *Text, X, Y, Scale, Scale, FFontRenderInfo());
 }
@@ -84,8 +84,14 @@ void AKeMuSanHUD::DrawHUD()
 
 	const EExamPhase P = EC->GetPhase();
 	DrawTopPrompt(EC);
+	DrawProgressBar(EC);
 	DrawScorePanel(EC);
 	DrawProgressList(EC);
+
+	if (P == EExamPhase::Driving || P == EExamPhase::PullOver || P == EExamPhase::Ready)
+	{
+		DrawMiniMap(EC, GetCar());
+	}
 
 	if (P != EExamPhase::Finished)
 	{
@@ -110,6 +116,22 @@ void AKeMuSanHUD::DrawHUD()
 	}
 }
 
+void AKeMuSanHUD::DrawProgressBar(AExamController* EC)
+{
+	if (!EC)
+	{
+		return;
+	}
+	const float W = Canvas->SizeX * 0.42f;
+	const float H = 10.f;
+	const float X = (Canvas->SizeX - W) * 0.5f;
+	const float Y = Canvas->SizeY - 52.f;
+
+	DrawFilledRect(Canvas, X - 2.f, Y - 2.f, W + 4.f, H + 4.f, FLinearColor(0.f, 0.f, 0.f, 0.55f));
+	DrawFilledRect(Canvas, X, Y, W * EC->GetProgress01(), H, FLinearColor(0.25f, 0.75f, 1.f, 0.85f));
+	DrawTextShadowed(TEXT("考试路线进度"), X, Y - 22.f, 0.8f, ColGray, GEngine->GetMediumFont());
+}
+
 void AKeMuSanHUD::DrawMenu()
 {
 	UFont* BigFont = GEngine->GetLargeFont();
@@ -118,33 +140,37 @@ void AKeMuSanHUD::DrawMenu()
 	const float CY = Canvas->SizeY * 0.5f;
 
 	const FString Title1 = TEXT("科目三路考模拟");
-	const FString Title2 = TEXT("道路驾驶技能考试 · 模拟训练");
+	const FString Title2 = TEXT("城市道路驾驶技能考试 · 全长1.5km真实路线");
 	DrawTextShadowed(Title1, CX - BigFont->GetStringSize(*Title1) * 3.0f * 0.5f, CY - 320.f, 3.0f, ColYellow, BigFont);
-	DrawTextShadowed(Title2, CX - BigFont->GetStringSize(*Title2) * 1.4f * 0.5f, CY - 230.f, 1.4f, ColWhite, BigFont);
+	DrawTextShadowed(Title2, CX - BigFont->GetStringSize(*Title2) * 1.3f * 0.5f, CY - 230.f, 1.3f, ColWhite, BigFont);
 
 	const FString Tips[] =
 	{
-		TEXT("按 Enter 开始考试（100分制，90分合格）"),
-		TEXT("按 F9 自由练习（不计分）"),
+		TEXT("F1  手动挡考试（100分制，90分合格）"),
+		TEXT("F2  自动挡考试（100分制，90分合格）"),
+		TEXT("F9  自由练习（不计分）"),
 		TEXT(""),
-		TEXT("W/S 油门/刹车    A/D 转向    1-5挡 / N空挡 / R倒挡"),
+		TEXT("W/S 油门/刹车    A/D 转向    P 手刹    F 安全带"),
 		TEXT("Q 左转向灯    E 右转向灯    L 灯光循环    J 远近交替"),
-		TEXT("空格 手刹    F 安全带    H 双闪    K 雾灯    B 喇叭    M 观察"),
+		TEXT("H 双闪    K 雾灯    B 喇叭    M 观察"),
+		TEXT("手动挡：1-5换挡 / N空挡 / R倒挡   自动挡：Tab P/R/N/D"),
 		TEXT("Esc 暂停"),
 		TEXT(""),
 		TEXT("考试流程：上车准备 → 灯光模拟 → 起步 → 直线行驶 → 变更车道"),
 		TEXT("→ 通过路口/人行横道 → 学校/公交站 → 会车 → 超车 → 加减挡"),
-		TEXT("→ 掉头 → 靠边停车")
+		TEXT("→ 掉头返回 → 靠边停车"),
+		TEXT(""),
+		TEXT("注意：路网上有社会车辆通行，发生碰撞将判不合格！")
 	};
 
-	float Y = CY - 140.f;
+	float Y = CY - 150.f;
 	for (const FString& Tip : Tips)
 	{
 		if (!Tip.IsEmpty())
 		{
-			DrawTextShadowed(Tip, CX - 340.f, Y, 1.15f, ColCyan, SmallFont);
+			DrawTextShadowed(Tip, CX - 350.f, Y, 1.15f, Tip.Contains(TEXT("!")) ? ColRed : ColCyan, SmallFont);
 		}
-		Y += 34.f;
+		Y += 32.f;
 	}
 
 	// 闪烁提示
@@ -152,7 +178,7 @@ void AKeMuSanHUD::DrawMenu()
 	if (FMath::Fmod(T, 1.2f) < 0.7f)
 	{
 		const FString Go = TEXT("▶ 按 Enter 开始考试 ◀");
-		DrawTextShadowed(Go, CX - BigFont->GetStringSize(*Go) * 1.6f * 0.5f, CY + 220.f, 1.6f, ColGreen, BigFont);
+		DrawTextShadowed(Go, CX - BigFont->GetStringSize(*Go) * 1.6f * 0.5f, CY + 260.f, 1.6f, ColGreen, BigFont);
 	}
 }
 
@@ -255,15 +281,28 @@ void AKeMuSanHUD::DrawVehiclePanel(AKeMuSanPawn* Car, AExamController* EC)
 
 	// 挡位
 	FString GearText;
-	switch (Car->GetGear())
+	if (Car->GetTransmissionType() == ETransmissionType::Auto)
 	{
-	case EGear::N: GearText = TEXT("N"); break;
-	case EGear::R: GearText = TEXT("R"); break;
-	case EGear::G1: GearText = TEXT("1"); break;
-	case EGear::G2: GearText = TEXT("2"); break;
-	case EGear::G3: GearText = TEXT("3"); break;
-	case EGear::G4: GearText = TEXT("4"); break;
-	case EGear::G5: GearText = TEXT("5"); break;
+		switch (Car->GetGear())
+		{
+		case EGear::N: GearText = TEXT("N"); break;
+		case EGear::R: GearText = TEXT("R"); break;
+		case EGear::G1: case EGear::G2: case EGear::G3: case EGear::G4: case EGear::G5:
+			GearText = TEXT("D"); break;
+		}
+	}
+	else
+	{
+		switch (Car->GetGear())
+		{
+		case EGear::N: GearText = TEXT("N"); break;
+		case EGear::R: GearText = TEXT("R"); break;
+		case EGear::G1: GearText = TEXT("1"); break;
+		case EGear::G2: GearText = TEXT("2"); break;
+		case EGear::G3: GearText = TEXT("3"); break;
+		case EGear::G4: GearText = TEXT("4"); break;
+		case EGear::G5: GearText = TEXT("5"); break;
+		}
 	}
 	DrawTextShadowed(GearText, X + 60.f, Y + 90.f, 1.8f, Car->IsStalled() ? ColRed : ColYellow, Font);
 
@@ -416,5 +455,116 @@ void AKeMuSanHUD::DrawKeyHelp(AExamController* EC)
 	if (EC && EC->GetPhase() == EExamPhase::Finished)
 	{
 		return;
+	}
+}
+
+void AKeMuSanHUD::DrawGearDisplay(AKeMuSanPawn* Car, const UFont* Font, float X, float Y)
+{
+	if (!Car) return;
+	FString G;
+	if (Car->GetTransmissionType() == ETransmissionType::Auto)
+	{
+		switch (Car->GetGear())
+		{
+		case EGear::N: G = TEXT("N"); break;
+		case EGear::R: G = TEXT("R"); break;
+		case EGear::G1: case EGear::G2: case EGear::G3: case EGear::G4: case EGear::G5:
+			G = TEXT("D"); break;
+		}
+	}
+	else
+	{
+		switch (Car->GetGear())
+		{
+		case EGear::N: G = TEXT("N"); break;
+		case EGear::R: G = TEXT("R"); break;
+		case EGear::G1: G = TEXT("1"); break;
+		case EGear::G2: G = TEXT("2"); break;
+		case EGear::G3: G = TEXT("3"); break;
+		case EGear::G4: G = TEXT("4"); break;
+		case EGear::G5: G = TEXT("5"); break;
+		}
+	}
+	DrawTextShadowed(G, X, Y, 1.8f, ColYellow, Font);
+}
+
+void AKeMuSanHUD::DrawMiniMap(AExamController* EC, AKeMuSanPawn* Car)
+{
+	if (!EC || !Canvas) return;
+	UFont* Font = GEngine->GetMediumFont();
+
+	// Small map box, top-right
+	const float MapW = 180.f;
+	const float MapH = 130.f;
+	const float MapX = Canvas->SizeX - MapW - 18.f;
+	const float MapY = Canvas->SizeY - MapH - 90.f;
+
+	DrawFilledRect(Canvas, MapX - 2.f, MapY - 2.f, MapW + 4.f, MapH + 4.f, FLinearColor(0.f, 0.f, 0.f, 0.6f));
+	DrawTextShadowed(TEXT("路线图"), MapX + 4.f, MapY + 2.f, 0.7f, ColCyan, Font);
+
+	// Draw simplified route topology: 东→北→西→掉头→返回
+	// 东段 (horizontal right): x=MapX+10..MapX+170, y=MapY+75
+	// 北段 (vertical up): x=MapX+155, y=MapY+18..MapY+75
+	// 西段 (horizontal left): x=MapX+10..MapX+158, y=MapY+18
+	// 返回段 (horizontal right, below): x=MapX+70..MapX+170, y=MapY+98
+	const float EastX1 = MapX + 12.f, EastX2 = MapX + MapW - 12.f;
+	const float WestY = MapY + 22.f;
+	const float EastY = MapY + 62.f;
+	const float NorthX = MapX + MapW - 28.f;
+	const float RetY = MapY + 90.f;
+	const float RetX1 = MapX + 68.f;
+
+	// Road lines
+	DrawFilledRect(Canvas, EastX1, EastY - 1.f, EastX2 - EastX1, 2.f, FLinearColor(0.5f, 0.5f, 0.55f, 0.9f));             // 东段
+	DrawFilledRect(Canvas, NorthX - 1.f, WestY, 2.f, EastY - WestY, FLinearColor(0.5f, 0.5f, 0.55f, 0.9f));                // 北段
+	DrawFilledRect(Canvas, EastX1, WestY - 1.f, NorthX - EastX1, 2.f, FLinearColor(0.5f, 0.5f, 0.55f, 0.9f));              // 西段
+	DrawFilledRect(Canvas, RetX1, RetY - 1.f, EastX2 - RetX1, 2.f, FLinearColor(0.55f, 0.5f, 0.5f, 0.9f));                // 返回段
+
+	// U-turn loop (small arc at left side)
+	DrawFilledRect(Canvas, EastX1 + 50.f, WestY + 35.f, 20.f, 20.f, FLinearColor(0.5f, 0.3f, 0.3f, 0.6f));
+
+	// Player position dot
+	const float Prog = EC->GetProgress01();
+	float DotX, DotY;
+	if (Prog < 0.35f)
+	{
+		// 东段
+		const float Frac = Prog / 0.35f;
+		DotX = EastX1 + (EastX2 - EastX1) * Frac;
+		DotY = EastY;
+	}
+	else if (Prog < 0.65f)
+	{
+		// 北段
+		const float Frac = (Prog - 0.35f) / 0.30f;
+		DotX = NorthX;
+		DotY = EastY - (EastY - WestY) * Frac;
+	}
+	else if (Prog < 0.82f)
+	{
+		// 西段
+		const float Frac = (Prog - 0.65f) / 0.17f;
+		DotX = NorthX - (NorthX - EastX1) * Frac;
+		DotY = WestY;
+	}
+	else
+	{
+		// 返回段
+		const float Frac = FMath::Clamp((Prog - 0.82f) / 0.18f, 0.f, 1.f);
+		DotX = RetX1 + (EastX2 - RetX1) * Frac;
+		DotY = RetY;
+	}
+	DrawFilledRect(Canvas, DotX - 3.f, DotY - 3.f, 6.f, 6.f, ColGreen);
+
+	// Next zone label
+	const TArray<FZoneStatus>& Zones = EC->GetZoneStatuses();
+	FString NextZone;
+	for (const FZoneStatus& Z : Zones)
+	{
+		if (Z.State == 0) { NextZone = Z.Name; break; }
+	}
+	if (!NextZone.IsEmpty())
+	{
+		DrawTextShadowed(FString::Printf(TEXT("▶ %s"), *NextZone), MapX + 4.f, RetY + 14.f, 0.65f, ColYellow, Font);
 	}
 }

@@ -26,6 +26,7 @@ protected:
 
 	void DrawMenu();
 	void DrawTopPrompt(AExamController* EC);
+	void DrawProgressBar(AExamController* EC);
 	void DrawScorePanel(AExamController* EC);
 	void DrawProgressList(AExamController* EC);
 	void DrawVehiclePanel(AKeMuSanPawn* Car, AExamController* EC);
@@ -33,7 +34,9 @@ protected:
 	void DrawResultPanel(AExamController* EC, AKeMuSanGameMode* GM);
 	void DrawPauseOverlay(AKeMuSanGameMode* GM);
 	void DrawKeyHelp(AExamController* EC);
+	void DrawMiniMap(AExamController* EC, AKeMuSanPawn* Car);
 
 	// 灯光状态字符串
 	FString GetLightStateText(const AKeMuSanPawn* Car) const;
+	void DrawGearDisplay(AKeMuSanPawn* Car, const UFont* Font, float X, float Y);
 };

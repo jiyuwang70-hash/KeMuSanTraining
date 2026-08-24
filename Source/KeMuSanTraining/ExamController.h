@@ -1,9 +1,11 @@
 // 考试总控制器：阶段流转、灯光模拟、全部考试项目判定与评分
+// 新版：基于路线投影坐标（里程 S / 横向偏移）判定，支持大型多段路网
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "ExamTypes.h"
+#include "RoadLayout.h"
 #include "ExamController.generated.h"
 
 class AKeMuSanPawn;
@@ -12,6 +14,7 @@ class AAICar;
 class APedestrian;
 class ATrafficLight;
 class ABeeper;
+class ATrafficManager;
 
 UCLASS()
 class KEMUSANTRAINING_API AExamController : public AActor
@@ -30,6 +33,9 @@ public:
 	// 灯光模拟答案（1..5）
 	void SubmitLightAnswer(int32 Answer);
 
+	// 设置变速箱类型
+	void SetTransmission(ETransmissionType InType) { Transmission = InType; }
+
 	// 暂停状态变化
 	void OnPauseChanged(bool bPaused);
 
@@ -44,16 +50,26 @@ public:
 	int32 GetLightQuestionIndex() const { return LightQuestionNumber; }
 	int32 GetLightQuestionTotal() const { return LightQuestionTotal; }
 	bool IsPractice() const { return bPractice; }
+	bool IsAutoTransmission() const { return Transmission == ETransmissionType::Auto; }
 	bool IsFailIssued() const { return bFailIssued; }
 	FString GetResultLine() const { return ResultLine; }
 	int32 GetTrafficLightState() const;
 	float GetTrafficLightRemaining() const;
 
+	// 全程进度 0..1（HUD 进度条）
+	UFUNCTION(BlueprintPure, Category = "Exam")
+	float GetProgress01() const;
+
 protected:
 	// ---- 阶段 ----
 	EExamPhase Phase = EExamPhase::Menu;
+	ETransmissionType Transmission = ETransmissionType::Manual;
 	bool bPractice = false;
 	bool bPaused = false;
+	bool bAutoTest = false;
+	bool bPresentationDefaultsApplied = false;
+	FTimerHandle ViewModeFixTimer;
+	int32 ViewModeFixAttempts = 0;
 	int32 Score = 100;
 	bool bFailIssued = false;
 	FString CurrentPrompt;
@@ -75,14 +91,14 @@ protected:
 	// ---- 起步 ----
 	bool bReadySignalOk = false;
 	bool bReadyObserveOk = false;
-	float StartCarX = 0.f;
+	float StartS = 0.f;
 	bool bHandbrakeLaunchCharged = false;
 	float HandbrakeLaunchTimer = 0.f;
 
 	// ---- 直线行驶 ----
 	bool bStraightInit = false;
 	float StraightRefYaw = 0.f;
-	float StraightRefY = 0.f;
+	float StraightRefLat = 0.f;
 	float StraightBadTime = 0.f;
 
 	// ---- 变更车道 ----
@@ -95,7 +111,11 @@ protected:
 	bool bIntersectionEntered = false;
 	bool bCrosswalkPedFail = false;
 	bool bCrosswalkSpeedCharged = false;
+	bool bCrosswalkYieldCharged = false;
 	bool bPedStarted = false;
+
+	// ---- 会车 ----
+	bool bMeetingCarSpawned = false;
 
 	// ---- 超车 ----
 	bool bOvertakePassed = false;
@@ -106,18 +126,24 @@ protected:
 
 	// ---- 掉头 ----
 	bool bUTurnEntered = false;
-	float UTurnYawRef = 0.f;
-	float UTurnDeltaMin = 0.f;  // 正向累计最大
-	float UTurnDeltaNeg = 0.f;  // 负向累计最小
+	float UTurnYawRef = 180.f;
+	float UTurnDeltaMin = 0.f;
+	float UTurnDeltaMax = 0.f;
 	bool bUTurnSignalUsed = false;
 	bool bUTurnObserved = false;
 	bool bUTurnSpeedCharged = false;
 	bool bUTurnEvaluated = false;
+	bool bUTurnArc1Done = false;
+	bool bUTurnStraightDone = false;
 
 	// ---- 加减挡 ----
 	int32 GearShiftStage = 0; // 0 未开始 1 已加至4挡 2 完成
 	int32 LastGearForShift = 0;
 	bool bGearJumpCharged = false;
+
+	// ---- 道路尽头处理 ----
+	float RoadEndTimer = 0.f;
+	bool bRoadEndCharged = false;
 
 	// ---- 靠边停车 ----
 	float PullOverSignalTime = 0.f;
@@ -136,17 +162,13 @@ protected:
 	float HandbrakeDriveTimer = 0.f;
 	float CenterlineTime = 0.f;
 	float SeatbeltOffTime = 0.f;
-	bool bRoadEndCharged = false;
 
 	// ---- 场景对象 ----
 	UPROPERTY()
 	ARoadBuilder* RoadBuilder = nullptr;
 
 	UPROPERTY()
-	AAICar* MeetingCar = nullptr;
-
-	UPROPERTY()
-	AAICar* SlowCar = nullptr;
+	ATrafficManager* Traffic = nullptr;
 
 	UPROPERTY()
 	APedestrian* Pedestrian = nullptr;
@@ -160,8 +182,18 @@ protected:
 	UPROPERTY()
 	AKeMuSanPawn* Car = nullptr;
 
-	float PrevCarX = 0.f;
-	bool bPrevXValid = false;
+	// ---- 路线投影状态 ----
+	const FRouteTrack* Track = nullptr;
+	float CurS = 0.f;        // 当前里程
+	float PrevS = 0.f;       // 上一帧里程
+	float CurLat = 0.f;      // 当前横向偏移（正值靠右）
+	float CurDistSq = 0.f;   // 离中心线的距离平方
+	bool bCurOnReturn = false;
+	bool bCurAligned = false;
+	bool bProjValid = false;
+
+	// ---- 自动驾驶（-autotest 截图验证用）----
+	float AutoSteerSmooth = 0.f;
 
 	// ---- 内部工具 ----
 	void SetPhase(EExamPhase NewPhase);
@@ -169,6 +201,8 @@ protected:
 	void AddDeduction(int32 Points, const FString& Reason);
 	void FailExam(const FString& Reason);
 	void FinishExam();
+	void ApplyPresentationDefaults(const TCHAR* Context);
+	void StartPresentationGuard();
 
 	void BuildLightPool();
 	void BuildLightOrder(int32 Count);
@@ -176,6 +210,8 @@ protected:
 	void MarkZone(int32 Index, int32 State);
 	void MarkZoneByName(const FString& Name, int32 State);
 
+	void UpdateProjection();
+	void SyncTrafficState();
 	void UpdatePrep(float DT);
 	void UpdateLightTest(float DT);
 	void UpdateReady(float DT);
@@ -184,21 +220,21 @@ protected:
 	void MonitorGeneral(float DT);
 
 	bool IsExamScoring() const { return !bPractice; }
-	float CarX() const;
-	float CarY() const;
-	float CarYawDeg() const;
 	float CarSpeedKmh() const;
-	bool IsHeadingMinusX() const;
+	float CarYawDeg() const;
 	bool HeadCheckedRecently(float Seconds) const;
-	float LocalX(const FVector& WorldLoc) const;
 
 	// 道路驾驶各项目
 	void TickStraight(float DT);
 	void TickLaneChange(float DT);
 	void TickIntersection(float DT);
 	void TickSchoolBus(float DT);
+	void TickMeeting(float DT);
 	void TickOvertake(float DT);
 	void TickGearShift(float DT);
 	void TickUTurn(float DT);
 	void TickPullOverTrigger(float DT);
+
+	// 自动驾驶（仅 -autotest）
+	void UpdateAutoDrive(float DT);
 };

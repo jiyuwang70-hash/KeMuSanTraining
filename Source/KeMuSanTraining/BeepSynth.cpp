@@ -138,13 +138,13 @@ void ABeeper::Tick(float DeltaSeconds)
 	{
 		Wave->SetPattern(4);
 	}
+	else if (HornTimer > 0.f)
+	{
+		// 一次性提示音（叮/双叮/警示）保持播放，优先于转向滴答，避免被吞掉
+	}
 	else if (bIndicatorOn)
 	{
 		Wave->SetPattern(5);
-	}
-	else if (HornTimer > 0.f)
-	{
-		// 一次性提示音（叮/双叮/警示）保持播放
 	}
 	else if (EngineRpm > 0.f)
 	{

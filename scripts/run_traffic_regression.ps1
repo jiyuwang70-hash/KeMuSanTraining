@@ -71,6 +71,10 @@ foreach ($scenarioName in $Scenario) {
     )
 
     Write-Host "[traffic] starting scenario=$scenarioName seed=$Seed"
+    # A stale default log from an earlier session must never satisfy this run's
+    # completion marker; remove it so polling only sees the fresh session.
+    $staleDefaultLog = Join-Path $LogRoot "KeMuSanTraining.log"
+    if (Test-Path -LiteralPath $staleDefaultLog) { Remove-Item -LiteralPath $staleDefaultLog -Force }
     $beforeShots = @(Get-ChildItem -LiteralPath $ShotRoot -Filter "*.png" -File -ErrorAction SilentlyContinue)
     $proc = Start-Process -FilePath $UnrealEditor -ArgumentList $args -WorkingDirectory $ProjectRoot `
         -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath -WindowStyle Hidden -PassThru
@@ -85,8 +89,8 @@ foreach ($scenarioName in $Scenario) {
             $combined = ""
             if (Test-Path -LiteralPath $stdoutPath) { $combined += Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue }
             if (Test-Path -LiteralPath $stderrPath) { $combined += Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue }
-            $ueLogs = @(Get-ChildItem -LiteralPath $LogRoot -Filter "KeMuSanTraining.log" -File -ErrorAction SilentlyContinue)
-            if ($ueLogs.Count -gt 0) { $combined += Get-Content -LiteralPath $ueLogs[0].FullName -Raw -ErrorAction SilentlyContinue }
+            $ueLogs = @(Get-ChildItem -LiteralPath $LogRoot -Filter "KeMuSanTraining.log" -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $startedAt })
+            foreach ($ueLog in $ueLogs) { $combined += Get-Content -LiteralPath $ueLog.FullName -Raw -ErrorAction SilentlyContinue }
             if ($combined -match "\[KeMuSanTraffic\] regression_complete") {
                 $regressionComplete = $true
                 break
@@ -118,8 +122,9 @@ foreach ($scenarioName in $Scenario) {
         $combined = ""
         if (Test-Path -LiteralPath $stdoutPath) { $combined += Get-Content -LiteralPath $stdoutPath -Raw -ErrorAction SilentlyContinue }
         if (Test-Path -LiteralPath $stderrPath) { $combined += Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue }
-        $ueLog = Join-Path $LogRoot "KeMuSanTraining.log"
-        if (Test-Path -LiteralPath $ueLog) { $combined += Get-Content -LiteralPath $ueLog -Raw -ErrorAction SilentlyContinue }
+        $freshUeLogs = @(Get-ChildItem -LiteralPath $LogRoot -Filter "KeMuSanTraining.log" -File -ErrorAction SilentlyContinue | Where-Object { $_.LastWriteTime -ge $startedAt })
+        if ($freshUeLogs.Count -eq 0) { throw "scenario produced no fresh KeMuSanTraining.log (pid=$procId)" }
+        foreach ($freshUeLog in $freshUeLogs) { $combined += Get-Content -LiteralPath $freshUeLog.FullName -Raw -ErrorAction SilentlyContinue }
         $combined | Set-Content -LiteralPath $logPath -Encoding utf8
 
         Assert-Contains $combined "\[KeMuSanTraffic\] regression_complete" "scenario did not emit the completion marker"

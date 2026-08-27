@@ -21,7 +21,8 @@ namespace
 	const FLinearColor ColGray(0.6f, 0.6f, 0.65f);
 	const FLinearColor ColCyan(0.35f, 0.85f, 1.f);
 
-	// Filled rectangle using GWhiteTexture (works in PIE, unlike DefaultTexture)
+	// Filled rectangle via texture-less FCanvasTileItem; the engine provides the
+	// white tile itself, so this links without GWhiteTexture and renders in PIE.
 	void DrawFilledRect(UCanvas* Canvas, float X, float Y, float W, float H, const FLinearColor& Color)
 	{
 		if (!Canvas) return;
@@ -150,7 +151,7 @@ void AKeMuSanHUD::DrawMenu()
 		TEXT("F2  自动挡考试（100分制，90分合格）"),
 		TEXT("F9  自由练习（不计分）"),
 		TEXT(""),
-		TEXT("W/S 油门/刹车    A/D 转向    P 手刹    F 安全带"),
+		TEXT("W/S 油门/刹车    A/D 转向    空格手刹    F 安全带"),
 		TEXT("Q 左转向灯    E 右转向灯    L 灯光循环    J 远近交替"),
 		TEXT("H 双闪    K 雾灯    B 喇叭    M 观察"),
 		TEXT("手动挡：1-5换挡 / N空挡 / R倒挡   自动挡：Tab P/R/N/D"),

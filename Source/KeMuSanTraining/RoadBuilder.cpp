@@ -1,6 +1,8 @@
 #include "RoadBuilder.h"
 
 #include "Components/DirectionalLightComponent.h"
+#include "Components/ExponentialHeightFogComponent.h"
+#include "Components/PostProcessComponent.h"
 #include "Components/SkyAtmosphereComponent.h"
 #include "Components/SkyLightComponent.h"
 #include "Components/StaticMeshComponent.h"
@@ -11,13 +13,19 @@ using namespace RoadLayout;
 
 namespace
 {
-	const FLinearColor ColAsphalt(0.22f, 0.23f, 0.25f);     // 深灰沥青
-	const FLinearColor ColWalkway(0.58f, 0.58f, 0.60f);
-	const FLinearColor ColCurb(0.48f, 0.48f, 0.50f);
-	const FLinearColor ColGrass(0.18f, 0.42f, 0.15f);      // 绿色草地
-	const FLinearColor ColLineWhite(0.88f, 0.88f, 0.86f);
-	const FLinearColor ColLineYellow(0.88f, 0.76f, 0.16f);
-	const FLinearColor ColTrunk(0.38f, 0.28f, 0.18f);
+	// 真实沉稳的高质感哑光柏油沥青
+	const FLinearColor ColAsphalt(0.12f, 0.13f, 0.14f);
+	// 细磨水泥人行道（现代暖灰铺装）
+	const FLinearColor ColWalkway(0.52f, 0.51f, 0.49f);
+	// 立体路缘石与街角石
+	const FLinearColor ColCurb(0.66f, 0.66f, 0.68f);
+	// 沉稳自然的园林草地墨绿（非刺眼荧光绿）
+	const FLinearColor ColGrass(0.07f, 0.18f, 0.08f);
+	// 醒目哑光标线
+	const FLinearColor ColLineWhite(0.95f, 0.95f, 0.94f);
+	const FLinearColor ColLineYellow(0.95f, 0.80f, 0.10f);
+	// 真实天然树干深褐色
+	const FLinearColor ColTrunk(0.22f, 0.16f, 0.10f);
 }
 
 ARoadBuilder::ARoadBuilder()
@@ -25,19 +33,55 @@ ARoadBuilder::ARoadBuilder()
 	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
 	SetRootComponent(Root);
 
+	// 真实午后倾斜日光（产生漂亮长阴影，增强场景纵深与立体感）
 	Sun = CreateDefaultSubobject<UDirectionalLightComponent>(TEXT("Sun"));
 	Sun->SetupAttachment(Root);
-	Sun->SetRelativeRotation(FRotator(-52.f, 28.f, 0.f));
-	Sun->SetIntensity(6.5f);
+	Sun->SetRelativeRotation(FRotator(-38.f, 48.f, 0.f));
+	Sun->SetIntensity(3.6f); // 均衡真实光照强度，彻底杜绝高光过曝泛白
+	Sun->SetLightColor(FLinearColor(1.0f, 0.98f, 0.94f));
+	Sun->SetCastShadows(true);
 
+	// 环境天光漫反射
 	Sky = CreateDefaultSubobject<USkyLightComponent>(TEXT("Sky"));
 	Sky->SetupAttachment(Root);
-	Sky->SetIntensity(1.1f);
+	Sky->SetIntensity(0.55f); // 柔和天光阴影补光
 	Sky->SourceType = SLS_CapturedScene;
 
 	Atmosphere = CreateDefaultSubobject<USkyAtmosphereComponent>(TEXT("Atmosphere"));
 	Atmosphere->SetupAttachment(Root);
 	Atmosphere->SetVisibility(true);
+
+	// 大气透视高度雾：平滑地平线，消除突兀天空切边，增强空气纵深感
+	HeightFog = CreateDefaultSubobject<UExponentialHeightFogComponent>(TEXT("HeightFog"));
+	HeightFog->SetupAttachment(Root);
+	HeightFog->SetFogDensity(0.0008f);
+	HeightFog->SetFogHeightFalloff(0.0012f);
+	HeightFog->SetFogInscatteringColor(FLinearColor(0.66f, 0.76f, 0.88f));
+	HeightFog->SetStartDistance(3200.f);
+
+	// 后期处理：锁定写实曝光与色彩对比度，还原深黑柏油沥青与饱满城市色彩
+	PostProcess = CreateDefaultSubobject<UPostProcessComponent>(TEXT("PostProcess"));
+	PostProcess->SetupAttachment(Root);
+	PostProcess->bUnbound = true;
+
+	PostProcess->Settings.bOverride_AutoExposureMethod = true;
+	PostProcess->Settings.AutoExposureMethod = AEM_Histogram;
+	PostProcess->Settings.bOverride_AutoExposureMinBrightness = true;
+	PostProcess->Settings.AutoExposureMinBrightness = 1.0f;
+	PostProcess->Settings.bOverride_AutoExposureMaxBrightness = true;
+	PostProcess->Settings.AutoExposureMaxBrightness = 2.5f;
+	PostProcess->Settings.bOverride_AutoExposureBias = true;
+	PostProcess->Settings.AutoExposureBias = -0.7f; // 压暗高光溢出，使路面深沉、白线醒目
+
+	PostProcess->Settings.bOverride_ColorSaturation = true;
+	PostProcess->Settings.ColorSaturation = FVector4(1.08f, 1.08f, 1.08f, 1.0f);
+	PostProcess->Settings.bOverride_ColorContrast = true;
+	PostProcess->Settings.ColorContrast = FVector4(1.06f, 1.06f, 1.06f, 1.0f);
+
+	PostProcess->Settings.bOverride_AmbientOcclusionIntensity = true;
+	PostProcess->Settings.AmbientOcclusionIntensity = 0.85f;
+	PostProcess->Settings.bOverride_AmbientOcclusionRadius = true;
+	PostProcess->Settings.AmbientOcclusionRadius = 160.f;
 }
 
 void ARoadBuilder::BeginPlay()
@@ -102,11 +146,11 @@ UStaticMeshComponent* ARoadBuilder::AddPiece(UStaticMesh* Mesh, const FVector& L
 	C->SetMobility(EComponentMobility::Movable);
 	C->SetCastShadow(true);
 	C->RegisterComponent();
-	FVector UseLoc = Loc;
+	FVector UseLoc = Loc * 100.0f;
 	if (bRaiseZ)
 	{
-		// Layer-based Z offset instead of linear accumulation to avoid Z-fighting
-		UseLoc.Z += PieceLayerZ;
+		// Layer-based Z offset in centimeters to avoid Z-fighting
+		UseLoc.Z += PieceLayerZ * 100.0f;
 	}
 	C->SetWorldLocation(UseLoc);
 	C->SetWorldScale3D(Extents);
@@ -412,12 +456,20 @@ void ARoadBuilder::PoleWithPlate(const FVector& BasePos, float FaceYawDeg, const
 
 void ARoadBuilder::MakeTree(const FVector& BasePos, float ScaleMul)
 {
-	AddCylinder(BasePos + FVector(0.f, 0.f, ScaleMul * 1.0f), FVector(0.34f * ScaleMul, 0.34f * ScaleMul, 2.0f * ScaleMul), ColTrunk);
-	uint32 Hash = GetTypeHash(BasePos);
-	float Hue = static_cast<float>(Hash % 100) / 100.f;
-	FLinearColor Canopy(0.13f + Hue * 0.06f, 0.40f + Hue * 0.10f, 0.15f);
-	AddCone(BasePos + FVector(0.f, 0.f, ScaleMul * 2.0f + ScaleMul * 1.6f),
-		FVector(2.8f * ScaleMul, 2.8f * ScaleMul, 3.4f * ScaleMul), Canopy);
+	// 真实天然树干
+	AddCylinder(BasePos + FVector(0.f, 0.f, ScaleMul * 1.1f), FVector(0.28f * ScaleMul, 0.28f * ScaleMul, 2.2f * ScaleMul), ColTrunk);
+	const uint32 Hash = GetTypeHash(BasePos);
+	const float Hue = static_cast<float>(Hash % 100) / 100.f;
+
+	// 底层饱满主树冠（自然园林圆润树冠，非刺眼尖锥）
+	const FLinearColor BaseCanopy(0.06f + Hue * 0.02f, 0.16f + Hue * 0.03f, 0.07f);
+	AddCylinder(BasePos + FVector(0.f, 0.f, ScaleMul * 2.6f),
+		FVector(2.4f * ScaleMul, 2.4f * ScaleMul, 1.8f * ScaleMul), BaseCanopy);
+
+	// 顶层透光圆冠（稍微收窄，形成饱满茂密的现代城市绿化冠层）
+	const FLinearColor TopCanopy(0.08f + Hue * 0.03f, 0.22f + Hue * 0.04f, 0.09f);
+	AddCylinder(BasePos + FVector(0.f, 0.f, ScaleMul * 3.8f),
+		FVector(1.7f * ScaleMul, 1.7f * ScaleMul, 1.2f * ScaleMul), TopCanopy);
 }
 
 void ARoadBuilder::MakeStreetLamp(const FVector& BasePos, float ArmYawDeg)
@@ -520,7 +572,7 @@ void ARoadBuilder::BuildStreetFurniture()
 }
 
 // ---------------------------------------------------------------------------
-// 城市街区建筑群
+// 城市街区建筑群（现代立面结构、窗带分层与天际线）
 // ---------------------------------------------------------------------------
 void ARoadBuilder::BuildCityBlocks()
 {
@@ -533,20 +585,26 @@ void ARoadBuilder::BuildCityBlocks()
 		{ 188.f, 225.f, 12.f, 308.f, false },    // 中部中（窄条）
 		{ 255.f, 504.f, 12.f, 308.f, false },    // 中部东
 		{ 536.f, 700.f, 12.f, 308.f, false },    // 北段以东
-		{ -40.f, 700.f, 336.f, 480.f, true }     // 北侧街区（远景高楼）
+		{ -40.f, 700.f, 336.f, 480.f, true }     // 北侧街区（远景高楼天际线）
 	};
 
-	static const FLinearColor Palette[] =
+	// 现代写实高质感建筑立面调色板（米白、暖灰、深钢、香槟灰）
+	static const FLinearColor FacadePalette[] =
 	{
-		FLinearColor(0.72f, 0.70f, 0.64f),
-		FLinearColor(0.60f, 0.66f, 0.73f),
-		FLinearColor(0.75f, 0.63f, 0.55f),
-		FLinearColor(0.58f, 0.71f, 0.60f),
-		FLinearColor(0.69f, 0.65f, 0.72f),
-		FLinearColor(0.78f, 0.74f, 0.58f),
-		FLinearColor(0.55f, 0.60f, 0.63f),
-		FLinearColor(0.71f, 0.58f, 0.52f)
+		FLinearColor(0.78f, 0.77f, 0.74f), // 米白花岗岩
+		FLinearColor(0.64f, 0.65f, 0.68f), // 现代钛金灰
+		FLinearColor(0.72f, 0.68f, 0.62f), // 暖砂岩
+		FLinearColor(0.48f, 0.50f, 0.54f), // 深色石墨
+		FLinearColor(0.75f, 0.73f, 0.70f), // 浅灰石材
+		FLinearColor(0.58f, 0.60f, 0.64f), // 现代商办青灰
+		FLinearColor(0.70f, 0.67f, 0.60f), // 浅米黄
+		FLinearColor(0.52f, 0.54f, 0.58f)  // 钢结构深灰
 	};
+
+	// 深色采光玻璃窗带颜色
+	const FLinearColor WindowColor(0.12f, 0.16f, 0.22f);
+	// 屋顶机房设备层深灰
+	const FLinearColor RooftopColor(0.25f, 0.26f, 0.28f);
 
 	FRandomStream Rand(1337);
 	for (const FBlock& Blk : Blocks)
@@ -558,26 +616,43 @@ void ARoadBuilder::BuildCityBlocks()
 				const float Roll = Rand.FRand();
 				if (Roll > 0.74f)
 				{
-					// 空地：种树
-					if (Roll > 0.90f)
+					// 空地：种多株错落行道树
+					if (Roll > 0.88f)
 					{
-						MakeTree(FVector(GX + Rand.FRandRange(-4.f, 4.f), GY + Rand.FRandRange(-4.f, 4.f), 0.f), 1.1f);
-						MakeTree(FVector(GX + Rand.FRandRange(-5.f, 5.f), GY + Rand.FRandRange(-5.f, 5.f), 0.f), 0.9f);
+						MakeTree(FVector(GX + Rand.FRandRange(-4.f, 4.f), GY + Rand.FRandRange(-4.f, 4.f), 0.f), 1.15f);
+						MakeTree(FVector(GX + Rand.FRandRange(-5.f, 5.f), GY + Rand.FRandRange(-5.f, 5.f), 0.f), 0.95f);
 					}
 					continue;
 				}
 
 				const float CX = GX + Rand.FRandRange(-4.f, 4.f);
 				const float CY = GY + Rand.FRandRange(-3.f, 3.f);
-				const float W = Rand.FRandRange(10.f, 17.f);
-				const float Dp = Rand.FRandRange(8.f, 14.f);
-				float H = Rand.FRandRange(6.f, 19.f);
-				if (Blk.bSkyline && Rand.FRand() > 0.72f)
+				const float W = Rand.FRandRange(12.f, 18.f);
+				const float Dp = Rand.FRandRange(9.f, 15.f);
+				float H = Rand.FRandRange(8.f, 22.f);
+				if (Blk.bSkyline && Rand.FRand() > 0.65f)
 				{
-					H = Rand.FRandRange(20.f, 34.f); // 远景高楼天际线
+					H = Rand.FRandRange(24.f, 42.f); // 远景高楼天际线，气势恢宏
 				}
-				const FLinearColor& C = Palette[Rand.RandRange(0, 7)];
-				AddBox(FVector(CX, CY, H * 0.5f), FVector(W, Dp, H), C);
+
+				// 1. 建筑主体楼栋
+				const FLinearColor& MainColor = FacadePalette[Rand.RandRange(0, 7)];
+				AddBox(FVector(CX, CY, H * 0.5f), FVector(W, Dp, H), MainColor);
+
+				// 2. 现代建筑特征：立体采光玻璃窗带（Window Strips）
+				// 沿楼高分层生成 1~3 条深色采光横带，形成现代建筑立体感
+				const int32 NumBands = FMath::Clamp(static_cast<int32>(H / 7.f), 1, 3);
+				for (int32 b = 1; b <= NumBands; ++b)
+				{
+					const float BandZ = (H / (NumBands + 1)) * b;
+					AddBox(FVector(CX, CY, BandZ), FVector(W + 0.12f, Dp + 0.12f, 1.4f), WindowColor);
+				}
+
+				// 3. 楼顶构架/女儿墙机房（Rooftop Box）
+				const float TopW = W * Rand.FRandRange(0.45f, 0.65f);
+				const float TopDp = Dp * Rand.FRandRange(0.45f, 0.65f);
+				const float TopH = Rand.FRandRange(1.8f, 2.8f);
+				AddBox(FVector(CX, CY, H + TopH * 0.5f), FVector(TopW, TopDp, TopH), RooftopColor);
 			}
 		}
 	}

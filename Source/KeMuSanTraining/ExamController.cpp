@@ -29,8 +29,8 @@ void AExamController::BeginPlay()
 	ApplyPresentationDefaults(TEXT("BeginPlay"));
 	StartPresentationGuard();
 
-	// 自动测试：12 秒后切换到绝对位置俯瞰相机，验证世界渲染是否正常
-	if (bAutoTest)
+	// 自动测试：仅在显式传入 -debug-abs-cam 时才切换调试相机，避免篡夺正常驾驶第一/第三人称视点
+	if (bAutoTest && FParse::Param(FCommandLine::Get(), TEXT("debug-abs-cam")))
 	{
 		FTimerHandle AbsCamHandle;
 		GetWorld()->GetTimerManager().SetTimer(AbsCamHandle, FTimerDelegate::CreateWeakLambda(this, [this]()
@@ -42,7 +42,7 @@ void AExamController::BeginPlay()
 			}
 			FActorSpawnParameters Params;
 			Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-			ACameraActor* Cam = GetWorld()->SpawnActor<ACameraActor>(FVector(150.f, 0.f, 22.f), FRotator(-15.f, 0.f, 0.f), Params);
+			ACameraActor* Cam = GetWorld()->SpawnActor<ACameraActor>(FVector(15000.f, 0.f, 2200.f), FRotator(-15.f, 0.f, 0.f), Params);
 			if (Cam)
 			{
 				if (UCameraComponent* CC = Cast<UCameraComponent>(Cam->FindComponentByClass(UCameraComponent::StaticClass())))
@@ -72,8 +72,8 @@ void AExamController::BeginPlay()
 		Traffic->Setup(Track);
 	}
 
-	// 信号灯：位于信号路口停止线右侧
-	TrafficLightActor = GetWorld()->SpawnActor<ATrafficLight>(FVector(161.f, 6.9f, 0.f), FRotator(0.f, 180.f, 0.f), Params);
+	// 信号灯：位于信号路口停止线右侧（坐标转为UE厘米并贴地）
+	TrafficLightActor = GetWorld()->SpawnActor<ATrafficLight>(FVector(161.f, 6.9f, RoadLayout::RoadSurfaceZ) * 100.f, FRotator(0.f, 180.f, 0.f), Params);
 
 	Pedestrian = GetWorld()->SpawnActor<APedestrian>(FVector(0.f, 0.f, -100.f), FRotator::ZeroRotator, Params);
 	if (Traffic)
@@ -92,6 +92,11 @@ void AExamController::BeginPlay()
 void AExamController::BeginExam(bool bIsExam)
 {
 	bPractice = !bIsExam;
+	PlayMode = bIsExam ? EGamePlayMode::SimulatedExam : EGamePlayMode::GuidedPractice;
+	if (Car)
+	{
+		Car->SetNoviceAssist(!bIsExam);
+	}
 	Score = 100;
 	Deductions.Reset();
 	bFailIssued = false;
@@ -564,7 +569,7 @@ void AExamController::SyncTrafficState()
 		return;
 	}
 	Traffic->UpdatePlayer(
-		Car->GetActorLocation(),
+		Car->GetActorLocation() * 0.01f,
 		Car->GetActorRotation().Vector(),
 		CurS,
 		bCurOnReturn,
@@ -584,13 +589,14 @@ void AExamController::UpdateProjection()
 		return;
 	}
 	const FVector Heading = Car->GetActorRotation().Vector();
-	const FRouteTrack::FProjResult P = Track->Project(Car->GetActorLocation(), Heading);
+	const FVector CarLocM = Car->GetActorLocation() * 0.01f;
+	const FRouteTrack::FProjResult P = Track->Project(CarLocM, Heading);
 	{
 		static int32 ProjDiag = 0;
 		if (++ProjDiag <= 8)
 		{
 			UE_LOG(LogTemp, Log, TEXT("[KeMuSan] proj pos=(%.1f,%.1f) -> S=%.2f lat=%.2f ret=%d aligned=%d samples=%d"),
-				Car->GetActorLocation().X, Car->GetActorLocation().Y, P.S, P.Lateral, P.bReturn ? 1 : 0, P.bAligned ? 1 : 0, Track->Num());
+				CarLocM.X, CarLocM.Y, P.S, P.Lateral, P.bReturn ? 1 : 0, P.bAligned ? 1 : 0, Track->Num());
 		}
 	}
 
@@ -1433,17 +1439,18 @@ void AExamController::MonitorGeneral(float DT)
 		// 与机动车、行人或自行车发生碰撞 -> 不合格
 		if (Phase == EExamPhase::Driving || Phase == EExamPhase::PullOver)
 		{
-			if (Traffic && Traffic->HitsPlayer(Car->GetActorLocation(), CarYawDeg()))
+			const FVector CarLocM = Car->GetActorLocation() * 0.01f;
+			if (Traffic && Traffic->HitsPlayer(CarLocM, CarYawDeg()))
 			{
 				FailExam(TEXT("与机动车发生碰撞"));
 				return;
 			}
-			if (Traffic && Traffic->HitsPedestrian(Car->GetActorLocation()))
+			if (Traffic && Traffic->HitsPedestrian(CarLocM))
 			{
 				FailExam(TEXT("与过街行人发生碰撞"));
 				return;
 			}
-			if (Traffic && Traffic->HitsBicycle(Car->GetActorLocation(), CarYawDeg()))
+			if (Traffic && Traffic->HitsBicycle(CarLocM, CarYawDeg()))
 			{
 				FailExam(TEXT("与非机动车发生碰撞"));
 				return;
@@ -1615,7 +1622,7 @@ void AExamController::UpdateAutoDrive(float DT)
 		}
 
 		const FVector TargetPos = Track->LocAtS(TargetS, TargetLat);
-		const FVector ToTarget = TargetPos - Car->GetActorLocation();
+		const FVector ToTarget = TargetPos - Car->GetActorLocation() * 0.01f;
 		const float TargetYaw = FMath::RadiansToDegrees(FMath::Atan2(ToTarget.Y, ToTarget.X));
 		float YawErr = FMath::UnwindDegrees(TargetYaw - CarYawDeg());
 		// 横向纠偏
@@ -1680,4 +1687,128 @@ bool AExamController::HeadCheckedRecently(float Seconds) const
 		return false;
 	}
 	return (GetWorld()->GetTimeSeconds() - Car->GetLastHeadCheckTime()) < Seconds;
+}
+
+void AExamController::SetPlayMode(EGamePlayMode InMode)
+{
+	PlayMode = InMode;
+	bPractice = (InMode == EGamePlayMode::GuidedPractice);
+	if (Car)
+	{
+		Car->SetNoviceAssist(bPractice);
+	}
+}
+
+float AExamController::GetCurrentSpeedLimit() const
+{
+	if (Phase == EExamPhase::Prep || Phase == EExamPhase::LightTest || Phase == EExamPhase::Ready)
+	{
+		return RoadLayout::ZoneLimit; // 30
+	}
+	if (Phase == EExamPhase::PullOver)
+	{
+		return RoadLayout::PullOverLimit; // 20
+	}
+
+	// 掉头区 (UTurnLimit = 25)
+	if (CurS >= RoadLayout::UTurnEntryS - 15.f && CurS <= RoadLayout::UTurnCompleteS + 15.f)
+	{
+		return RoadLayout::UTurnLimit;
+	}
+
+	// 学校区域与公交车站 (ZoneLimit = 30)
+	if (CurS >= RoadLayout::SchoolStartS - 30.f && CurS <= RoadLayout::SchoolEndS + 10.f)
+	{
+		return RoadLayout::ZoneLimit;
+	}
+	if (CurS >= RoadLayout::BusStartS - 25.f && CurS <= RoadLayout::BusEndS + 10.f)
+	{
+		return RoadLayout::ZoneLimit;
+	}
+
+	// 斑马线 / 人行横道 (ZoneLimit = 30)
+	if (CurS >= RoadLayout::CrosswalkS - 35.f && CurS <= RoadLayout::CrosswalkS + 15.f)
+	{
+		return RoadLayout::ZoneLimit;
+	}
+
+	// 直行路口 / 信号灯 (IntersectionLimit = 35)
+	if (CurS >= RoadLayout::IntersectionMinS - 30.f && CurS <= RoadLayout::IntersectionMaxS + 15.f)
+	{
+		return RoadLayout::IntersectionLimit;
+	}
+
+	// 转角弯道 B、C (ZoneLimit = 30)
+	if ((CurS >= RoadLayout::CornerBStartS && CurS <= RoadLayout::CornerBEndS) ||
+		(CurS >= RoadLayout::CornerCStartS && CurS <= RoadLayout::CornerCEndS))
+	{
+		return RoadLayout::ZoneLimit;
+	}
+
+	// 一般直线道路最高 60km/h
+	return RoadLayout::GeneralLimit;
+}
+
+float AExamController::GetCurrentEdgeDistance() const
+{
+	// 靠边停车基准：直接复用 RoadLayout 共享常量 PullOverGapBase (2.6m)
+	float Gap = RoadLayout::PullOverGapBase - CurLat;
+	return FMath::Clamp(Gap, -0.2f, 3.5f);
+}
+
+FString AExamController::GetCurrentExamItemName() const
+{
+	switch (Phase)
+	{
+	case EExamPhase::Menu:      return TEXT("系统准备就绪");
+	case EExamPhase::Prep:      return TEXT("上车准备");
+	case EExamPhase::LightTest: return TEXT("夜间模拟灯光");
+	case EExamPhase::Ready:     return TEXT("起步准备");
+	case EExamPhase::PullOver:  return TEXT("靠边停车");
+	case EExamPhase::Finished:  return TEXT("考试评判结束");
+	default: break;
+	}
+
+	if (CurS >= RoadLayout::CrosswalkS - 35.f && CurS <= RoadLayout::CrosswalkS + 15.f)
+	{
+		return TEXT("通过人行横道");
+	}
+	if (CurS >= RoadLayout::IntersectionMinS - 30.f && CurS <= RoadLayout::IntersectionMaxS + 15.f)
+	{
+		return TEXT("直行通过路口");
+	}
+	if (CurS >= RoadLayout::SchoolStartS - 20.f && CurS <= RoadLayout::SchoolEndS + 10.f)
+	{
+		return TEXT("通过学校区域");
+	}
+	if (CurS >= RoadLayout::BusStartS - 20.f && CurS <= RoadLayout::BusEndS + 10.f)
+	{
+		return TEXT("通过公共汽车站");
+	}
+	if (CurS >= RoadLayout::LaneChangeStartS && CurS <= RoadLayout::LaneChangeEndS)
+	{
+		return TEXT("变更车道");
+	}
+	if (CurS >= RoadLayout::StraightStartS && CurS <= RoadLayout::StraightEndS)
+	{
+		return TEXT("直线行驶");
+	}
+	if (CurS >= RoadLayout::MeetingStartS - 10.f && CurS <= RoadLayout::MeetingEndS + 20.f)
+	{
+		return TEXT("会车");
+	}
+	if (CurS >= RoadLayout::OvertakeStartS && CurS <= RoadLayout::OvertakeEndS + 20.f)
+	{
+		return TEXT("超车");
+	}
+	if (CurS >= RoadLayout::UTurnEntryS - 15.f && CurS <= RoadLayout::UTurnCompleteS + 15.f)
+	{
+		return TEXT("掉头");
+	}
+	if (CurS >= RoadLayout::GearStartS && CurS <= RoadLayout::GearEndS)
+	{
+		return TEXT("加减挡位操作");
+	}
+
+	return TEXT("道路安全驾驶");
 }

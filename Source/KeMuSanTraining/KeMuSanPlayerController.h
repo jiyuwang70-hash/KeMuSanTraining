@@ -8,6 +8,7 @@
 
 class AKeMuSanGameMode;
 class AExamController;
+class AKeMuSanPawn;
 struct FKey;
 
 UCLASS()
@@ -18,9 +19,11 @@ class KEMUSANTRAINING_API AKeMuSanPlayerController : public APlayerController
 public:
 	AKeMuSanPlayerController();
 
+	virtual void BeginPlay() override;
 	virtual void SetupInputComponent() override;
+	virtual void Tick(float DeltaSeconds) override;
 
-	// 挡位键（灯光考试阶段被忽略）
+	// 挡位键（灯光考试阶段被忽略，调镜模式下 R 键拦截为复位镜面）
 	void GearKey(int32 GearIndex);
 
 	// 灯光模拟答案键（非灯光考试阶段被忽略）
@@ -35,11 +38,26 @@ public:
 	void FreePracticePressed();
 	void ManualExamPressed();   // F1
 	void AutoExamPressed();     // F2
-	void CycleGearAuto();       // Tab (auto transmission only)
+	void CycleGearOrMirror();   // Tab (调镜模式下切换镜面；自动挡模式下切换P/R/N/D)
+	void ToggleCameraPressed(); // V (切换追尾视角与座舱视点)
+	void ToggleMirrorModePressed(); // T (开启/关闭后视镜校准模式)
+	void MirrorUp();
+	void MirrorDown();
+	void MirrorLeft();
+	void MirrorRight();
 
 	AKeMuSanGameMode* GetGameMode() const;
 	AExamController* GetExamController() const;
+	AKeMuSanPawn* GetTrainingPawn() const;
 
 protected:
 	int32 LastGearValue = 0;
+
+	// 自动化输入链测试驱动（真实 PlayerInput/InputKey 队列）
+	bool bInputChainTesting = false;
+	float InputChainTimer = 0.f;
+	int32 InputChainStep = 0;
+	int32 InputChainSubStep = 0;
+	int32 InputChainFailures = 0;
+	void TickInputChainTest(float DeltaSeconds);
 };

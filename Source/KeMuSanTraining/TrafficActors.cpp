@@ -36,45 +36,65 @@ AAICar::AAICar()
 		return D;
 	};
 
-	// 车身颜色池（社会车辆外观多样性）
+	// 真实高质感车身颜色池（社会车辆外观丰富多样）
 	static const FLinearColor BodyColors[] =
 	{
-		FLinearColor(0.75f, 0.78f, 0.82f), // 白
-		FLinearColor(0.16f, 0.18f, 0.22f), // 黑
-		FLinearColor(0.55f, 0.60f, 0.66f), // 银
-		FLinearColor(0.62f, 0.16f, 0.12f), // 红
-		FLinearColor(0.14f, 0.32f, 0.55f), // 蓝
-		FLinearColor(0.72f, 0.58f, 0.18f)  // 金
+		FLinearColor(0.85f, 0.86f, 0.88f), // 珍珠白
+		FLinearColor(0.12f, 0.13f, 0.15f), // 曜石黑
+		FLinearColor(0.52f, 0.55f, 0.60f), // 钛金银
+		FLinearColor(0.68f, 0.12f, 0.10f), // 动感红
+		FLinearColor(0.12f, 0.28f, 0.52f), // 深海蓝
+		FLinearColor(0.70f, 0.58f, 0.42f), // 香槟金
+		FLinearColor(0.35f, 0.38f, 0.42f), // 高级灰
+		FLinearColor(0.18f, 0.40f, 0.30f)  // 墨青色
 	};
-	const int32 Seed = static_cast<int32>(GetTypeHash(GetName())) % 6;
+	const int32 Seed = static_cast<int32>(GetTypeHash(GetName())) % 8;
+	const int32 ModelType = (Seed % 3); // 0: 轿车, 1: 城市SUV, 2: 商务面包车
 
-	MakePart(TEXT("Body"), CubeAsset.Object, FVector(0.f, 0.f, 0.72f), FVector(4.2f, 1.8f, 1.0f), BodyColors[Seed]);
-	MakePart(TEXT("Cabin"), CubeAsset.Object, FVector(-0.15f, 0.f, 1.52f), FVector(2.2f, 1.68f, 0.62f), FLinearColor(0.10f, 0.13f, 0.17f));
+	FVector BodyScale(4.2f, 1.8f, 1.0f);
+	FVector CabinLoc(-15.f, 0.f, 152.f);
+	FVector CabinScale(2.2f, 1.68f, 0.62f);
 
-	// 车轮
+	if (ModelType == 1) // 城市 SUV
+	{
+		BodyScale = FVector(4.4f, 1.88f, 1.15f);
+		CabinLoc = FVector(-10.f, 0.f, 158.f);
+		CabinScale = FVector(2.6f, 1.72f, 0.70f);
+	}
+	else if (ModelType == 2) // 商务面包/微客
+	{
+		BodyScale = FVector(4.5f, 1.82f, 1.25f);
+		CabinLoc = FVector(5.f, 0.f, 165.f);
+		CabinScale = FVector(3.2f, 1.70f, 0.85f);
+	}
+
+	MakePart(TEXT("Body"), CubeAsset.Object, FVector(0.f, 0.f, 72.f), BodyScale, BodyColors[Seed]);
+	MakePart(TEXT("Cabin"), CubeAsset.Object, CabinLoc, CabinScale, FLinearColor(0.10f, 0.13f, 0.17f));
+
+	// 车轮（横向卧倒轴线指向Y轴，贴合地面）
 	auto MakeWheel = [&](const TCHAR* Name, const FVector& Loc)
 	{
 		UStaticMeshComponent* W = CreateDefaultSubobject<UStaticMeshComponent>(Name);
 		W->SetStaticMesh(CylAsset.Object);
 		W->SetRelativeLocation(Loc);
-		W->SetRelativeRotation(FRotator(0.f, 90.f, 0.f));
-		W->SetRelativeScale3D(FVector(0.34f, 0.34f, 0.24f));
+		W->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+		W->SetRelativeScale3D(FVector(0.65f, 0.65f, 0.22f));
 		W->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		W->SetupAttachment(Root);
 		UMaterialInstanceDynamic* D = UMaterialInstanceDynamic::Create(MatAsset.Object, this);
 		D->SetVectorParameterValue(FName("Color"), FLinearColor(0.06f, 0.06f, 0.07f));
 		W->SetMaterial(0, D);
 	};
-	MakeWheel(TEXT("WheelFL"), FVector(1.35f, 0.84f, 0.34f));
-	MakeWheel(TEXT("WheelFR"), FVector(1.35f, -0.84f, 0.34f));
-	MakeWheel(TEXT("WheelRL"), FVector(-1.35f, 0.84f, 0.34f));
-	MakeWheel(TEXT("WheelRR"), FVector(-1.35f, -0.84f, 0.34f));
+	MakeWheel(TEXT("WheelFL"), FVector(135.f, 84.f, 32.5f));
+	MakeWheel(TEXT("WheelFR"), FVector(135.f, -84.f, 32.5f));
+	MakeWheel(TEXT("WheelRL"), FVector(-135.f, 84.f, 32.5f));
+	MakeWheel(TEXT("WheelRR"), FVector(-135.f, -84.f, 32.5f));
 
 	// 车灯
-	MakePart(TEXT("HeadL"), CubeAsset.Object, FVector(2.11f, 0.60f, 0.72f), FVector(0.10f, 0.30f, 0.16f), FLinearColor(0.9f, 0.9f, 0.8f));
-	MakePart(TEXT("HeadR"), CubeAsset.Object, FVector(2.11f, -0.60f, 0.72f), FVector(0.10f, 0.30f, 0.16f), FLinearColor(0.9f, 0.9f, 0.8f));
-	MakePart(TEXT("TailL"), CubeAsset.Object, FVector(-2.11f, 0.60f, 0.72f), FVector(0.10f, 0.30f, 0.14f), FLinearColor(0.5f, 0.04f, 0.03f));
-	MakePart(TEXT("TailR"), CubeAsset.Object, FVector(-2.11f, -0.60f, 0.72f), FVector(0.10f, 0.30f, 0.14f), FLinearColor(0.5f, 0.04f, 0.03f));
+	MakePart(TEXT("HeadL"), CubeAsset.Object, FVector(211.f, 60.f, 72.f), FVector(0.10f, 0.30f, 0.16f), FLinearColor(0.95f, 0.95f, 0.85f));
+	MakePart(TEXT("HeadR"), CubeAsset.Object, FVector(211.f, -60.f, 72.f), FVector(0.10f, 0.30f, 0.16f), FLinearColor(0.95f, 0.95f, 0.85f));
+	MakePart(TEXT("TailL"), CubeAsset.Object, FVector(-211.f, 60.f, 72.f), FVector(0.10f, 0.30f, 0.14f), FLinearColor(0.6f, 0.04f, 0.03f));
+	MakePart(TEXT("TailR"), CubeAsset.Object, FVector(-211.f, -60.f, 72.f), FVector(0.10f, 0.30f, 0.14f), FLinearColor(0.6f, 0.04f, 0.03f));
 }
 
 void AAICar::InitRoute(const FVector& InStart, const FVector& InEnd, float InSpeedKmh)
@@ -84,7 +104,7 @@ void AAICar::InitRoute(const FVector& InStart, const FVector& InEnd, float InSpe
 	SpeedMs = InSpeedKmh / 3.6f;
 	bRouteMode = true;
 	bActive = true;
-	SetActorLocation(InStart);
+	SetActorLocation(InStart * 100.f);
 	SetActorHiddenInGame(false);
 	const FVector Dir = (EndLoc - StartLoc).GetSafeNormal();
 	SetActorRotation(Dir.Rotation());
@@ -99,11 +119,11 @@ void AAICar::Tick(float DeltaSeconds)
 	}
 
 	const FVector Dir = (EndLoc - StartLoc).GetSafeNormal();
-	const FVector NewLoc = GetActorLocation() + Dir * SpeedMs * DeltaSeconds;
+	const FVector NewLoc = GetActorLocation() + Dir * (SpeedMs * 100.f) * DeltaSeconds;
 	SetActorLocation(NewLoc);
 
-	const float Traveled = FVector::Dist(StartLoc, NewLoc);
-	if (Traveled >= FVector::Dist(StartLoc, EndLoc))
+	const float Traveled = FVector::Dist(StartLoc * 100.f, NewLoc);
+	if (Traveled >= FVector::Dist(StartLoc * 100.f, EndLoc * 100.f))
 	{
 		bActive = false;
 		bRouteMode = false;
@@ -128,7 +148,7 @@ void AAICar::Deactivate()
 
 void AAICar::SetPose(const FVector& Pos, float YawDeg)
 {
-	SetActorLocationAndRotation(Pos, FRotator(0.f, YawDeg, 0.f), false);
+	SetActorLocationAndRotation(Pos * 100.f, FRotator(0.f, YawDeg, 0.f), false);
 }
 
 // ---------------------------------------------------------------------------
@@ -161,10 +181,10 @@ APedestrian::APedestrian()
 		return C;
 	};
 
-	BodyComp = MakePart(TEXT("Body"), CubeAsset.Object, FVector(0.f, 0.f, 1.05f), FVector(0.42f, 0.30f, 0.8f), FLinearColor(0.85f, 0.3f, 0.18f));
-	HeadComp = MakePart(TEXT("Head"), CubeAsset.Object, FVector(0.f, 0.f, 1.62f), FVector(0.32f, 0.32f, 0.32f), FLinearColor(0.95f, 0.8f, 0.65f));
-	MakePart(TEXT("LegL"), CubeAsset.Object, FVector(0.f, 0.12f, 0.36f), FVector(0.14f, 0.14f, 0.72f), FLinearColor(0.15f, 0.18f, 0.3f));
-	MakePart(TEXT("LegR"), CubeAsset.Object, FVector(0.f, -0.12f, 0.36f), FVector(0.14f, 0.14f, 0.72f), FLinearColor(0.15f, 0.18f, 0.3f));
+	BodyComp = MakePart(TEXT("Body"), CubeAsset.Object, FVector(0.f, 0.f, 105.f), FVector(0.42f, 0.30f, 0.8f), FLinearColor(0.85f, 0.3f, 0.18f));
+	HeadComp = MakePart(TEXT("Head"), CubeAsset.Object, FVector(0.f, 0.f, 162.f), FVector(0.32f, 0.32f, 0.32f), FLinearColor(0.95f, 0.8f, 0.65f));
+	MakePart(TEXT("LegL"), CubeAsset.Object, FVector(0.f, 12.f, 36.f), FVector(0.14f, 0.14f, 0.72f), FLinearColor(0.15f, 0.18f, 0.3f));
+	MakePart(TEXT("LegR"), CubeAsset.Object, FVector(0.f, -12.f, 36.f), FVector(0.14f, 0.14f, 0.72f), FLinearColor(0.15f, 0.18f, 0.3f));
 }
 
 void APedestrian::PrepareCrossing(const FVector& InFrom, const FVector& InTo, float InSpeedMs)
@@ -177,7 +197,7 @@ void APedestrian::PrepareCrossing(const FVector& InFrom, const FVector& InTo, fl
 	bQueued = true;
 	bWaiting = true;
 	bActive = false;
-	SetActorLocation(From);
+	SetActorLocation(From * 100.f);
 	SetActorRotation((To - From).Rotation());
 	SetActorHiddenInGame(false);
 }
@@ -231,7 +251,7 @@ void APedestrian::Tick(float DeltaSeconds)
 
 	const FVector Dir = (To - From).GetSafeNormal();
 	Traveled += Speed * DeltaSeconds;
-	SetActorLocation(From + Dir * FMath::Min(Traveled, TotalDist));
+	SetActorLocation((From + Dir * FMath::Min(Traveled, TotalDist)) * 100.f);
 
 	// 简单行走摆动
 	const float Swing = FMath::Sin(Traveled * 4.5f) * 4.f;
@@ -253,7 +273,7 @@ bool APedestrian::IsOnRoad(float CrosswalkXLocal, float RoadHalfWidth) const
 	{
 		return false;
 	}
-	const FVector L = GetActorLocation();
+	const FVector L = GetActorLocation() * 0.01f;
 	return FMath::Abs(L.X - CrosswalkXLocal) < 7.f && FMath::Abs(L.Y) < RoadHalfWidth + 1.f;
 }
 
@@ -274,7 +294,7 @@ ATrafficLight::ATrafficLight()
 
 	Pole = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Pole"));
 	Pole->SetStaticMesh(CylAsset.Object);
-	Pole->SetRelativeLocation(FVector(0.f, 0.f, 2.6f));
+	Pole->SetRelativeLocation(FVector(0.f, 0.f, 260.f));
 	Pole->SetRelativeScale3D(FVector(0.12f, 0.12f, 2.6f));
 	Pole->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	Pole->SetupAttachment(Root);
@@ -295,9 +315,9 @@ ATrafficLight::ATrafficLight()
 	};
 
 	// 上红 中黄 下绿
-	MakeHead(TEXT("HeadRed"), 5.5f, HeadRed, RedMat);
-	MakeHead(TEXT("HeadYellow"), 4.9f, HeadYellow, YellowMat);
-	MakeHead(TEXT("HeadGreen"), 4.3f, HeadGreen, GreenMat);
+	MakeHead(TEXT("HeadRed"), 550.f, HeadRed, RedMat);
+	MakeHead(TEXT("HeadYellow"), 490.f, HeadYellow, YellowMat);
+	MakeHead(TEXT("HeadGreen"), 430.f, HeadGreen, GreenMat);
 }
 
 void ATrafficLight::ResetLight()
@@ -379,17 +399,32 @@ ABicycle::ABicycle()
 		UMaterialInstanceDynamic* D = UMaterialInstanceDynamic::Create(MatAsset.Object, this);
 		D->SetVectorParameterValue(FName("Color"), Color);
 		Comp->SetMaterial(0, D);
-	};		MakePart(Frame, TEXT("Frame"), CubeAsset.Object, FVector(0.f, 0.f, 1.0f), FVector(0.08f, 1.6f, 0.08f), FLinearColor(0.12f, 0.13f, 0.15f));
-	MakePart(Seat, TEXT("Seat"), CubeAsset.Object, FVector(0.f, 0.f, 1.4f), FVector(0.15f, 0.25f, 0.06f), FLinearColor(0.08f, 0.09f, 0.10f));
-	MakePart(WheelF, TEXT("WheelF"), CylAsset.Object, FVector(0.4f, 0.f, 0.38f), FVector(0.38f, 0.38f, 0.04f), FLinearColor(0.06f, 0.06f, 0.07f));
-	MakePart(WheelR, TEXT("WheelR"), CylAsset.Object, FVector(-0.4f, 0.f, 0.38f), FVector(0.38f, 0.38f, 0.04f), FLinearColor(0.06f, 0.06f, 0.07f));
+	};
+	MakePart(Frame, TEXT("Frame"), CubeAsset.Object, FVector(0.f, 0.f, 60.f), FVector(0.08f, 1.6f, 0.08f), FLinearColor(0.12f, 0.13f, 0.15f));
+	MakePart(Seat, TEXT("Seat"), CubeAsset.Object, FVector(0.f, 0.f, 85.f), FVector(0.15f, 0.25f, 0.06f), FLinearColor(0.08f, 0.09f, 0.10f));
+
+	auto MakeWheel = [&](UStaticMeshComponent*& Comp, const TCHAR* Name, const FVector& Loc)
+	{
+		Comp = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		Comp->SetStaticMesh(CylAsset.Object);
+		Comp->SetRelativeLocation(Loc);
+		Comp->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+		Comp->SetRelativeScale3D(FVector(0.64f, 0.64f, 0.06f));
+		Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Comp->SetupAttachment(Root);
+		UMaterialInstanceDynamic* D = UMaterialInstanceDynamic::Create(MatAsset.Object, this);
+		D->SetVectorParameterValue(FName("Color"), FLinearColor(0.06f, 0.06f, 0.07f));
+		Comp->SetMaterial(0, D);
+	};
+	MakeWheel(WheelF, TEXT("WheelF"), FVector(40.f, 0.f, 32.f));
+	MakeWheel(WheelR, TEXT("WheelR"), FVector(-40.f, 0.f, 32.f));
 }
 
 void ABicycle::Activate(const FVector& Pos, float YawDeg, float InSpeedMs)
 {
 	bActive = true;
 	SpeedMs = InSpeedMs;
-	SetActorLocationAndRotation(Pos, FRotator(0.f, YawDeg, 0.f), false);
+	SetActorLocationAndRotation(Pos * 100.f, FRotator(0.f, YawDeg, 0.f), false);
 	SetActorHiddenInGame(false);
 }
 
@@ -405,7 +440,7 @@ void ABicycle::Tick(float DeltaSeconds)
 	if (!bActive) return;
 
 	const FVector Fwd = GetActorRotation().Vector();
-	SetActorLocation(GetActorLocation() + Fwd * SpeedMs * DeltaSeconds);
+	SetActorLocation(GetActorLocation() + Fwd * (SpeedMs * 100.f) * DeltaSeconds);
 
 	// Simple wobble animation
 	if (FMath::Abs(SpeedMs) > 0.2f)
@@ -438,12 +473,12 @@ void ATrafficManager::Setup(const FRouteTrack* InTrack)
 	{
 		FActorSpawnParameters Params;
 		Params.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
-		for (int32 i = 0; i < 18; ++i) // increased from 12 for denser traffic
+		for (int32 i = 0; i < 28; ++i) // 扩充环境社会车辆池至28辆，支撑复杂车水马龙路况
 		{
 			AAICar* Car = GetWorld()->SpawnActor<AAICar>(FVector(0.f, 0.f, -100.f), FRotator::ZeroRotator, Params);
 			if (Car) { CarPool.Add(Car); }
 		}
-		for (int32 i = 0; i < 5; ++i)
+		for (int32 i = 0; i < 8; ++i) // 扩充自行车至8辆
 		{
 			ABicycle* Bike = GetWorld()->SpawnActor<ABicycle>(FVector(0.f, 0.f, -200.f), FRotator::ZeroRotator, Params);
 			if (Bike) { BikePool.Add(Bike); }
@@ -452,18 +487,24 @@ void ATrafficManager::Setup(const FRouteTrack* InTrack)
 		SlowCar = AcquireCar();
 		Crosser = AcquireCar();
 
-		// Parked cars (roadside)
+		// 路侧规范停放社会车辆（营造真实城市街景）
 		auto SpawnParked = [&](const FVector& Pos, float Yaw)
 		{
 			AAICar* P = GetWorld()->SpawnActor<AAICar>(Pos, FRotator(0.f, Yaw, 0.f), Params);
 			if (P) { P->Activate(0.f); P->SetPose(Pos, Yaw); ParkedCars.Add(P); }
 		};
 		using namespace RoadLayout;
-		SpawnParked(FVector(240.f, -7.f, 0.25f), 0.f);     // School zone south
-		SpawnParked(FVector(255.f, -7.f, 0.25f), 0.f);
-		SpawnParked(FVector(300.f, -7.f, 0.25f), 0.f);     // Bus stop area
-		SpawnParked(FVector(470.f, 314.f, 0.25f), 180.f);  // West segment
-		SpawnParked(FVector(448.f, 314.f, 0.25f), 180.f);
+		SpawnParked(FVector(45.f, -7.2f, 0.25f), 0.f);      // 起点东段商铺前
+		SpawnParked(FVector(62.f, -7.2f, 0.25f), 0.f);
+		SpawnParked(FVector(240.f, -7.2f, 0.25f), 0.f);     // 学校区域南侧泊位
+		SpawnParked(FVector(255.f, -7.2f, 0.25f), 0.f);
+		SpawnParked(FVector(305.f, -7.2f, 0.25f), 0.f);     // 公交车站后方泊位
+		SpawnParked(FVector(320.f, -7.2f, 0.25f), 0.f);
+		SpawnParked(FVector(527.2f, 85.f, 0.25f), 90.f);    // 北段路侧停放车
+		SpawnParked(FVector(527.2f, 160.f, 0.25f), 90.f);
+		SpawnParked(FVector(470.f, 313.8f, 0.25f), 180.f);  // 西段商住楼前
+		SpawnParked(FVector(448.f, 313.8f, 0.25f), 180.f);
+		SpawnParked(FVector(280.f, 313.8f, 0.25f), 180.f);
 
 		CrosserFrom = FVector(CrossStreet1X, -70.f, 0.25f);
 		CrosserTo = FVector(CrossStreet1X, 150.f, 0.25f);
@@ -731,15 +772,28 @@ void ATrafficManager::TrySpawnScenarioTraffic()
 	}
 	else if (bFull)
 	{
-		AddScripted(86.f, 1, 28.f, TEXT("same_direction"));
-		AddScripted(210.f, -1, 34.f, TEXT("oncoming"));
-		AddScripted(342.f, 1, 25.f, TEXT("same_direction_far"));
+		AddScripted(32.f, 1, 22.f, TEXT("same_direction_slow")); // 前方同向慢速引导车（距考生32m，清晰可见）
+		AddScripted(48.f, -1, 30.f, TEXT("oncoming_close"));      // 对向近距离交会车（距考生48m，迎面错车）
+		AddScripted(110.f, -1, 32.f, TEXT("oncoming_mid"));       // 连续对向错车流
+		AddScripted(170.f, -1, 34.f, TEXT("oncoming_far"));
+		AddScripted(260.f, 1, 28.f, TEXT("same_direction_mid"));
+		AddScripted(340.f, -1, 30.f, TEXT("oncoming_3"));
+		AddScripted(420.f, 1, 26.f, TEXT("same_direction_far"));
+
+		// 起点附近路侧顺行自行车（增强复杂交通参与者交互）
+		if (BikePool.Num() > 0 && BikePool[0] && !BikePool[0]->IsActive())
+		{
+			const FVector BikePos = Track->LocAtS(22.f, -(RoadLayout::CurbDistance + 0.8f));
+			const FVector BikeTan = Track->TangentAtS(22.f);
+			BikePool[0]->Activate(BikePos, FMath::RadiansToDegrees(FMath::Atan2(BikeTan.Y, BikeTan.X)), 4.0f);
+		}
 	}
 	else
 	{
 		UE_LOG(LogTemp, Warning, TEXT("[KeMuSanTraffic] unknown scenario=%s, using full_mix layout"), *ScenarioName);
-		AddScripted(86.f, 1, 28.f, TEXT("same_direction"));
-		AddScripted(210.f, -1, 34.f, TEXT("oncoming"));
+		AddScripted(32.f, 1, 22.f, TEXT("same_direction_slow"));
+		AddScripted(48.f, -1, 30.f, TEXT("oncoming_close"));
+		AddScripted(110.f, -1, 32.f, TEXT("oncoming_mid"));
 	}
 }
 
@@ -788,45 +842,45 @@ void ATrafficManager::ActivateCrosswalkScenarioTraffic()
 
 void ATrafficManager::TrySpawnAmbient()
 {
-	if (!Track || Ambients.Num() >= 10 || ScenarioName.Equals(TEXT("empty"), ESearchCase::IgnoreCase))
+	if (!Track || Ambients.Num() >= 16 || ScenarioName.Equals(TEXT("empty"), ESearchCase::IgnoreCase))
 	{
 		return;
 	}
 
 	FAmbientCar A;
-	A.Dir = (ScenarioRandom.FRand() < 0.62f) ? -1 : 1;
+	A.Dir = (ScenarioRandom.FRand() < 0.60f) ? -1 : 1;
 
 	if (A.Dir < 0)
 	{
-		// 对向车：出现在考生前方远处
-		A.S = PlayerS + ScenarioRandom.FRandRange(130.f, 240.f);
-		A.CruiseMs = ScenarioRandom.FRandRange(28.f, 44.f) / 3.6f;
+		// 对向车：出现在考生前方远处（80~220m），产生连续会车动态
+		A.S = PlayerS + ScenarioRandom.FRandRange(80.f, 220.f);
+		A.CruiseMs = ScenarioRandom.FRandRange(28.f, 42.f) / 3.6f;
 	}
 	else
 	{
-		// 同向车：与考生保持可跟驰距离
-		A.S = PlayerS + ScenarioRandom.FRandRange(90.f, 170.f);
-		A.CruiseMs = ScenarioRandom.FRandRange(22.f, 38.f) / 3.6f;
+		// 同向车：与考生保持合理前后跟驰距离（50~140m）
+		A.S = PlayerS + ScenarioRandom.FRandRange(50.f, 140.f);
+		A.CruiseMs = ScenarioRandom.FRandRange(22.f, 36.f) / 3.6f;
 	}
 
 	// 避免干扰考试事件区
-	if (A.S > RoadLayout::MeetingStartS - 30.f && A.S < RoadLayout::MeetingEndS + 20.f)
+	if (A.S > RoadLayout::MeetingStartS - 25.f && A.S < RoadLayout::MeetingEndS + 15.f)
 	{
 		return;
 	}
-	if (A.S > RoadLayout::OvertakeStartS - 30.f && A.S < RoadLayout::OvertakeEndS + 20.f)
+	if (A.S > RoadLayout::OvertakeStartS - 25.f && A.S < RoadLayout::OvertakeEndS + 15.f)
 	{
 		return;
 	}
-	// 避免同车道近距离重复
+	// 避免同车道过密重叠
 	for (const FAmbientCar& Other : Ambients)
 	{
-		if (Other.Dir == A.Dir && FMath::Abs(Other.S - A.S) < 40.f)
+		if (Other.Dir == A.Dir && FMath::Abs(Other.S - A.S) < 28.f)
 		{
 			return;
 		}
 	}
-	if (A.S < 30.f || A.S > Track->GetMainLength() - 30.f)
+	if (A.S < 25.f || A.S > Track->GetMainLength() - 25.f)
 	{
 		return;
 	}
@@ -1086,7 +1140,7 @@ bool ATrafficManager::HitsPlayer(const FVector& InPlayerPos, float PlayerYawDeg)
 	auto CheckOne = [&](const AAICar* Car) -> bool
 	{
 		return Car && Car->IsActive() && !Car->IsHidden() &&
-			BoxesOverlap(InPlayerPos, PlayerYawDeg, Car->GetActorLocation(), Car->GetHeadingDeg(), HL, HW, HL, HW);
+			BoxesOverlap(InPlayerPos, PlayerYawDeg, Car->GetActorLocation() * 0.01f, Car->GetHeadingDeg(), HL, HW, HL, HW);
 	};
 
 	if (CheckOne(MeetingCar) || CheckOne(SlowCar))
@@ -1119,7 +1173,7 @@ bool ATrafficManager::HitsPedestrian(const FVector& InPlayerPos) const
 	{
 		return false;
 	}
-	return FVector::DistSquared2D(InPlayerPos, PedestrianActor->GetLocation()) < FMath::Square(3.2f);
+	return FVector::DistSquared2D(InPlayerPos, PedestrianActor->GetLocation() * 0.01f) < FMath::Square(3.2f);
 }
 
 bool ATrafficManager::HitsBicycle(const FVector& InPlayerPos, float PlayerYawDeg) const
@@ -1130,7 +1184,7 @@ bool ATrafficManager::HitsBicycle(const FVector& InPlayerPos, float PlayerYawDeg
 		{
 			continue;
 		}
-		if (BoxesOverlap(InPlayerPos, PlayerYawDeg, Bike->GetLocation(), Bike->GetHeadingDeg(), 2.15f, 0.98f, 0.75f, 0.45f))
+		if (BoxesOverlap(InPlayerPos, PlayerYawDeg, Bike->GetLocation() * 0.01f, Bike->GetHeadingDeg(), 2.15f, 0.98f, 0.75f, 0.45f))
 		{
 			return true;
 		}
@@ -1205,8 +1259,8 @@ void ATrafficManager::TickBikes(float DT)
 		{
 			B->Tick(DT);
 			const FVector BLoc = B->GetLocation();
-			// Recycle if far from player (约400m，单位为厘米)
-			if (FVector::DistSquared(BLoc, PlayerPos) > FMath::Square(40000.f))
+			// Recycle if far from player (校准为400米比较)
+			if (FVector::DistSquared(BLoc * 0.01f, PlayerPos) > FMath::Square(400.f))
 			{
 				B->Deactivate();
 			}

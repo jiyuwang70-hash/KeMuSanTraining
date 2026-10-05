@@ -3,6 +3,9 @@
 #include "Components/InputComponent.h"
 #include "Engine/World.h"
 #include "GameFramework/Pawn.h"
+#include "GameFramework/PlayerInput.h"
+#include "Misc/CommandLine.h"
+#include "GenericPlatform/GenericPlatformMisc.h"
 
 #include "KeMuSanGameMode.h"
 #include "KeMuSanPawn.h"
@@ -11,6 +14,33 @@
 AKeMuSanPlayerController::AKeMuSanPlayerController()
 {
 	bShowMouseCursor = false;
+	PrimaryActorTick.bCanEverTick = true;
+	PrimaryActorTick.bTickEvenWhenPaused = true;
+}
+
+void AKeMuSanPlayerController::BeginPlay()
+{
+	Super::BeginPlay();
+
+	if (FParse::Param(FCommandLine::Get(), TEXT("test-input-chain")))
+	{
+		bInputChainTesting = true;
+		InputChainTimer = 0.f;
+		InputChainStep = 0;
+		InputChainSubStep = 0;
+		InputChainFailures = 0;
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] started automated input chain verification via native PlayerInput/InputKey"));
+	}
+}
+
+void AKeMuSanPlayerController::Tick(float DeltaSeconds)
+{
+	Super::Tick(DeltaSeconds);
+
+	if (bInputChainTesting)
+	{
+		TickInputChainTest(DeltaSeconds);
+	}
 }
 
 void AKeMuSanPlayerController::SetupInputComponent()
@@ -37,13 +67,25 @@ void AKeMuSanPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("Answer4"), IE_Pressed, this, &AKeMuSanPlayerController::HandleAnswerKey);
 	InputComponent->BindAction(TEXT("Answer5"), IE_Pressed, this, &AKeMuSanPlayerController::HandleAnswerKey);
 
-	// 全局按键
-	InputComponent->BindAction(TEXT("Confirm"), IE_Pressed, this, &AKeMuSanPlayerController::ConfirmPressed);
-	InputComponent->BindAction(TEXT("Pause"), IE_Pressed, this, &AKeMuSanPlayerController::PausePressed);
+	// 全局按键（单次绑定，允许在暂停时执行）
+	FInputActionBinding& ConfirmBinding = InputComponent->BindAction(TEXT("Confirm"), IE_Pressed, this, &AKeMuSanPlayerController::ConfirmPressed);
+	ConfirmBinding.bExecuteWhenPaused = true;
+
+	FInputActionBinding& PauseBinding = InputComponent->BindAction(TEXT("Pause"), IE_Pressed, this, &AKeMuSanPlayerController::PausePressed);
+	PauseBinding.bExecuteWhenPaused = true;
+
 	InputComponent->BindAction(TEXT("FreePractice"), IE_Pressed, this, &AKeMuSanPlayerController::FreePracticePressed);
 	InputComponent->BindAction(TEXT("ManualExam"), IE_Pressed, this, &AKeMuSanPlayerController::ManualExamPressed);
 	InputComponent->BindAction(TEXT("AutoExam"), IE_Pressed, this, &AKeMuSanPlayerController::AutoExamPressed);
-	InputComponent->BindAction(TEXT("CycleGearAuto"), IE_Pressed, this, &AKeMuSanPlayerController::CycleGearAuto);
+
+	// 调镜与视角按键
+	InputComponent->BindAction(TEXT("CycleGearAuto"), IE_Pressed, this, &AKeMuSanPlayerController::CycleGearOrMirror);
+	InputComponent->BindAction(TEXT("ToggleCamera"), IE_Pressed, this, &AKeMuSanPlayerController::ToggleCameraPressed);
+	InputComponent->BindAction(TEXT("ToggleMirrorMode"), IE_Pressed, this, &AKeMuSanPlayerController::ToggleMirrorModePressed);
+	InputComponent->BindAction(TEXT("MirrorUp"), IE_Pressed, this, &AKeMuSanPlayerController::MirrorUp);
+	InputComponent->BindAction(TEXT("MirrorDown"), IE_Pressed, this, &AKeMuSanPlayerController::MirrorDown);
+	InputComponent->BindAction(TEXT("MirrorLeft"), IE_Pressed, this, &AKeMuSanPlayerController::MirrorLeft);
+	InputComponent->BindAction(TEXT("MirrorRight"), IE_Pressed, this, &AKeMuSanPlayerController::MirrorRight);
 }
 
 void AKeMuSanPlayerController::HandleGearKey(FKey Key)
@@ -84,13 +126,17 @@ void AKeMuSanPlayerController::GearKey(int32 GearIndex)
 		// 灯光考试阶段：数字键用于答题，不换挡
 		return;
 	}
-	if (APawn* P = GetPawn())
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
-		if (AKeMuSanPawn* Car = Cast<AKeMuSanPawn>(P))
+		if (Car->IsMirrorAdjustMode() && GearIndex == 1)
 		{
-			Car->SelectGear(GearIndex);
-			LastGearValue = GearIndex;
+			// 调镜模式下按 R 键：重置后视镜为标准镜位，严禁触发挂倒挡！
+			Car->ResetActiveMirrorToStandard();
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInput] Mirror reset to standard via R key (no reverse gear)"));
+			return;
 		}
+		Car->SelectGear(GearIndex);
+		LastGearValue = GearIndex;
 	}
 }
 
@@ -112,6 +158,13 @@ void AKeMuSanPlayerController::ConfirmPressed()
 	if (GM->bPaused)
 	{
 		GM->TogglePause();
+		return;
+	}
+
+	if (!GM->IsGameStarted())
+	{
+		// 首屏回车：开始推荐的【引导练习】（手动挡）
+		GM->StartFreePractice(ETransmissionType::Manual);
 		return;
 	}
 
@@ -140,16 +193,83 @@ void AKeMuSanPlayerController::AutoExamPressed()
 	}
 }
 
-void AKeMuSanPlayerController::CycleGearAuto()
+void AKeMuSanPlayerController::CycleGearOrMirror()
 {
-	if (APawn* P = GetPawn())
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
-		if (AKeMuSanPawn* Car = Cast<AKeMuSanPawn>(P))
+		if (Car->IsMirrorAdjustMode())
 		{
-			if (Car->GetTransmissionType() == ETransmissionType::Auto)
-			{
-				Car->CycleGearAuto();
-			}
+			// 调镜模式下 Tab 切换当前调节的镜面（左 -> 内 -> 右 -> 左）
+			Car->CycleActiveMirror();
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInput] Tab switched active mirror: %d"), static_cast<int32>(Car->GetActiveMirror()));
+			return;
+		}
+
+		if (Car->GetTransmissionType() == ETransmissionType::Auto)
+		{
+			Car->CycleGearAuto();
+		}
+	}
+}
+
+void AKeMuSanPlayerController::ToggleCameraPressed()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		Car->ToggleCameraView();
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanInput] Camera view toggled (Cockpit=%d)"), Car->IsCockpitView() ? 1 : 0);
+	}
+}
+
+void AKeMuSanPlayerController::ToggleMirrorModePressed()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		Car->ToggleMirrorAdjustMode();
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanInput] Mirror adjust mode toggled (%d)"), Car->IsMirrorAdjustMode() ? 1 : 0);
+	}
+}
+
+void AKeMuSanPlayerController::MirrorUp()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		if (Car->IsMirrorAdjustMode())
+		{
+			Car->AdjustActiveMirror(0.5f, 0.0f);
+		}
+	}
+}
+
+void AKeMuSanPlayerController::MirrorDown()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		if (Car->IsMirrorAdjustMode())
+		{
+			Car->AdjustActiveMirror(-0.5f, 0.0f);
+		}
+	}
+}
+
+void AKeMuSanPlayerController::MirrorLeft()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		if (Car->IsMirrorAdjustMode())
+		{
+			Car->AdjustActiveMirror(0.0f, -0.5f);
+		}
+	}
+}
+
+void AKeMuSanPlayerController::MirrorRight()
+{
+	if (AKeMuSanPawn* Car = GetTrainingPawn())
+	{
+		if (Car->IsMirrorAdjustMode())
+		{
+			Car->AdjustActiveMirror(0.0f, 0.5f);
 		}
 	}
 }
@@ -185,4 +305,404 @@ AExamController* AKeMuSanPlayerController::GetExamController() const
 {
 	AKeMuSanGameMode* GM = GetGameMode();
 	return GM ? GM->GetExamController() : nullptr;
+}
+
+AKeMuSanPawn* AKeMuSanPlayerController::GetTrainingPawn() const
+{
+	return Cast<AKeMuSanPawn>(GetPawn());
+}
+
+void AKeMuSanPlayerController::TickInputChainTest(float DeltaSeconds)
+{
+	InputChainTimer += DeltaSeconds;
+	if (InputChainTimer < 0.12f)
+	{
+		return;
+	}
+	InputChainTimer = 0.f;
+
+	AKeMuSanGameMode* GM = GetGameMode();
+	AKeMuSanPawn* Car = GetTrainingPawn();
+
+	switch (InputChainStep)
+	{
+	case 0: // Step 0: Enter 键启动推荐练习
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Enter, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Enter, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = GM && GM->IsGameStarted();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step0_enter_start_game %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 1;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 1: // Step 1: SpaceBar 键松开手刹
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && !Car->IsHandbrakeEngaged();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step1_space_handbrake %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 2;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 2: // Step 2: One 键挂入 1 挡
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::One, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::One, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && (Car->GetGear() == EGear::G1);
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step2_one_gear1 %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 3;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 3: // Step 3: W 键油门轴（按压响应与松开归零）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::W, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			const bool bPressedOk = Car && (Car->GetThrottle() > 0.05f);
+			if (!bPressedOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step3_w_throttle_pressed %s (Throttle=%.2f)"),
+				bPressedOk ? TEXT("PASS") : TEXT("FAIL"), Car ? Car->GetThrottle() : 0.f);
+			InputKey(FInputKeyParams(EKeys::W, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bReleasedOk = Car && (Car->GetThrottle() <= 0.05f);
+			if (!bReleasedOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step3_w_throttle_released %s"), bReleasedOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 4;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 4: // Step 4: A 键转向轴（按压左转与松开回正）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::A, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			const bool bPressedOk = Car && (Car->GetSteeringInput() < -0.05f);
+			if (!bPressedOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step4_a_steer_pressed %s (Steer=%.2f)"),
+				bPressedOk ? TEXT("PASS") : TEXT("FAIL"), Car ? Car->GetSteeringInput() : 0.f);
+			InputKey(FInputKeyParams(EKeys::A, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bReleasedOk = Car && (FMath::Abs(Car->GetSteeringInput()) <= 0.05f);
+			if (!bReleasedOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step4_a_steer_released %s"), bReleasedOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 5;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 5: // Step 5: Q 键左转向灯
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Q, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Q, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && Car->IsLeftSignalOn();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step5_q_left_signal %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 6;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 6: // Step 6: B 键鸣笛（按压鸣响与松开停止）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::B, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			const bool bHeldOk = Car && Car->IsHornHeld();
+			if (!bHeldOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step6_b_horn_held %s"), bHeldOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputKey(FInputKeyParams(EKeys::B, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bReleasedOk = Car && !Car->IsHornHeld();
+			if (!bReleasedOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step6_b_horn_released %s"), bReleasedOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 7;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 7: // Step 7: M 键侧头观察
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::M, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::M, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && (Car->GetHeadCheckTimer() > 0.f);
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step7_m_head_check %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 8;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 8: // Step 8: T 键开启调镜模式
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::T, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::T, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && Car->IsMirrorAdjustMode();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step8_t_mirror_mode %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 9;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 9: // Step 9: Tab 键切换镜面（从 Left 切到 Interior）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Tab, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Tab, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && (Car->GetActiveMirror() != EMirrorType::Left);
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step9_tab_cycle_mirror %s (ActiveMirror=%d)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), Car ? static_cast<int32>(Car->GetActiveMirror()) : -1);
+			InputChainStep = 10;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 10: // Step 10: 方向键微调镜面
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Up, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Up, IE_Released, 0.0));
+			InputKey(FInputKeyParams(EKeys::Left, IE_Pressed, 1.0));
+			InputChainSubStep = 2;
+		}
+		else if (InputChainSubStep == 2)
+		{
+			InputKey(FInputKeyParams(EKeys::Left, IE_Released, 0.0));
+			InputChainSubStep = 3;
+		}
+		else
+		{
+			const EMirrorType CurMirror = Car ? Car->GetActiveMirror() : EMirrorType::Interior;
+			const bool bOk = Car && (FMath::Abs(Car->GetMirrorState(CurMirror).Pitch) > 0.01f || FMath::Abs(Car->GetMirrorState(CurMirror).Yaw) > 0.01f);
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step10_arrow_keys_adjust %s (Pitch=%.2f, Yaw=%.2f)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), Car ? Car->GetMirrorState(CurMirror).Pitch : 0.f, Car ? Car->GetMirrorState(CurMirror).Yaw : 0.f);
+			InputChainStep = 11;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 11: // Step 11: 调镜模式下按 R 键（核心安全机制：镜面重置为标准，严禁挂入倒挡！）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::R, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::R, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bNotReverse = Car && (Car->GetGear() != EGear::R);
+			const bool bStandard = Car && Car->GetMirrorState(Car->GetActiveMirror()).bStandardAdjusted;
+			const bool bOk = bNotReverse && bStandard;
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step11_r_mirror_reset_no_reverse %s (Gear=%d, Standard=%d)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), Car ? static_cast<int32>(Car->GetGear()) : -1, bStandard ? 1 : 0);
+			InputChainStep = 12;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 12: // Step 12: T 键退出调镜模式
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::T, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::T, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && !Car->IsMirrorAdjustMode();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step12_t_exit_mirror_mode %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 13;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 13: // Step 13: V 键切换座舱第一人称视角
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::V, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::V, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && Car->IsCockpitView();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step13_v_toggle_cockpit %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 14;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 14: // Step 14: Escape 键暂停游戏
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Escape, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Escape, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = GM && GM->bPaused;
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step14_escape_pause %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 15;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 15: // Step 15: 暂停中按 Escape 键恢复运行（验证 bExecuteWhenPaused 生效）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::Escape, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Escape, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = GM && !GM->bPaused;
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step15_escape_unpause_in_paused_state %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 16;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 16: // Step 16: 汇总结果与判定
+		if (InputChainFailures == 0)
+		{
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] test_complete PASS"));
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("[KeMuSanInputChain] test_complete FAIL (Failures=%d)"), InputChainFailures);
+		}
+		bInputChainTesting = false;
+		InputChainStep = 17;
+		if (FParse::Param(FCommandLine::Get(), TEXT("test-input-chain-exit")))
+		{
+			FGenericPlatformMisc::RequestExit(false);
+		}
+		break;
+
+	default:
+		break;
+	}
 }

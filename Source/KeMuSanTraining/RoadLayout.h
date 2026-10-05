@@ -91,7 +91,8 @@ namespace RoadLayout
 	constexpr float RoadEndS = 1195.f;        // 返回段尽头（未停车警告）
 
 	// ---- 世界坐标锚点（供场景搭建 / 交通流使用）----
-	inline const FVector StartPose(0.f, LaneWidth * 0.5f, 1.f);      // 考试车起点
+	constexpr float RoadSurfaceZ = 0.061f;                              // 路面顶高（米制，对应6.1cm），供车辆/交通对象贴地
+	inline const FVector StartPose(0.f, LaneWidth * 0.5f, RoadSurfaceZ); // 考试车起点（精准贴地，车轮不悬空不深陷）
 	constexpr float CrossStreet1X = 173.f;   // 信号路口（跨东段）
 	constexpr float CrossStreetBX = 520.f;   // 转角 B 纵向道路
 	constexpr float CrossStreetCY = 320.f;   // 转角 C 横向道路

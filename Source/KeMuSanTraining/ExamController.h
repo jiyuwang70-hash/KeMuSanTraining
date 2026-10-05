@@ -60,8 +60,18 @@ public:
 	UFUNCTION(BlueprintPure, Category = "Exam")
 	float GetProgress01() const;
 
+	// 真实路段限速与靠边停车数据（供 HUD 复用）
+	float GetCurrentSpeedLimit() const;
+	float GetCurrentEdgeDistance() const;
+	FString GetCurrentExamItemName() const;
+
+	// 游戏模式（引导练习 vs 模拟考试）
+	void SetPlayMode(EGamePlayMode InMode);
+	EGamePlayMode GetPlayMode() const { return PlayMode; }
+
 protected:
-	// ---- 阶段 ----
+	// ---- 模式与阶段 ----
+	EGamePlayMode PlayMode = EGamePlayMode::GuidedPractice;
 	EExamPhase Phase = EExamPhase::Menu;
 	ETransmissionType Transmission = ETransmissionType::Manual;
 	bool bPractice = false;

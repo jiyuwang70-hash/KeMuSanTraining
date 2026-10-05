@@ -60,4 +60,5 @@ protected:
 
 	FTimerHandle AutoShotTimer;
 	FTimerHandle TrafficRegressionExitTimer;
+	FTimerHandle ShowcaseTimer;
 };

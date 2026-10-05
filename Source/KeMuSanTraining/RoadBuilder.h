@@ -15,6 +15,7 @@ class UMaterial;
 class UDirectionalLightComponent;
 class USkyLightComponent;
 class USkyAtmosphereComponent;
+class UExponentialHeightFogComponent;
 
 UCLASS()
 class KEMUSANTRAINING_API ARoadBuilder : public AActor
@@ -44,6 +45,12 @@ protected:
 
 	UPROPERTY(VisibleAnywhere)
 	USkyAtmosphereComponent* Atmosphere = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	UExponentialHeightFogComponent* HeightFog = nullptr;
+
+	UPROPERTY(VisibleAnywhere)
+	class UPostProcessComponent* PostProcess = nullptr;
 
 	UStaticMesh* CubeMesh = nullptr;
 	UStaticMesh* CylMesh = nullptr;

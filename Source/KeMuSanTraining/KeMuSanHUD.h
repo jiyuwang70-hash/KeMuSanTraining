@@ -1,13 +1,15 @@
-// 科目三模拟游戏 HUD（Canvas 绘制）
+// 科目三模拟游戏 HUD（Canvas 绘制：全中文沉浸首屏、现代仪表盘、光学后视镜、30cm停车标尺）
 #pragma once
 
 #include "CoreMinimal.h"
 #include "GameFramework/HUD.h"
+#include "ExamTypes.h"
 #include "KeMuSanHUD.generated.h"
 
 class AKeMuSanGameMode;
 class AExamController;
 class AKeMuSanPawn;
+class UTextureRenderTarget2D;
 
 UCLASS()
 class KEMUSANTRAINING_API AKeMuSanHUD : public AHUD
@@ -22,21 +24,32 @@ protected:
 	AExamController* GetExamController() const;
 	AKeMuSanPawn* GetCar() const;
 
+	// Pixel-Perfect 锐利文字绘制系统（消除字体贴图双线性重采样发花）
+	void DrawTextPixel(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font);
+	void DrawTextBig(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 IntScale = 2);
+	void DrawTextShadowedPixel(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font);
 	void DrawTextShadowed(const FString& Text, float X, float Y, float Scale, const FLinearColor& Color, const UFont* Font);
 
+	// 核心界面子系统
 	void DrawMenu();
-	void DrawTopPrompt(AExamController* EC);
-	void DrawProgressBar(AExamController* EC);
+	void DrawTopHeader(AExamController* EC, AKeMuSanPawn* Car);
+	void DrawStepGuide(AExamController* EC, AKeMuSanPawn* Car);
 	void DrawScorePanel(AExamController* EC);
 	void DrawProgressList(AExamController* EC);
-	void DrawVehiclePanel(AKeMuSanPawn* Car, AExamController* EC);
+	void DrawMirrors(AKeMuSanPawn* Car);
+	void DrawMirrorFrame(float X, float Y, float W, float H, const FString& Label, UTextureRenderTarget2D* Target, bool bActive, const FMirrorOpticalState& State);
+	void DrawMirrorAdjustOverlay(AKeMuSanPawn* Car);
+	void DrawModernDashboard(AKeMuSanPawn* Car, AExamController* EC);
+	void DrawPullOverRadar(AExamController* EC);
 	void DrawLightTestPanel(AExamController* EC);
 	void DrawResultPanel(AExamController* EC, AKeMuSanGameMode* GM);
 	void DrawPauseOverlay(AKeMuSanGameMode* GM);
-	void DrawKeyHelp(AExamController* EC);
 	void DrawMiniMap(AExamController* EC, AKeMuSanPawn* Car);
+	void DrawKeyHelp(AExamController* EC, AKeMuSanPawn* Car);
 
-	// 灯光状态字符串
+	// 辅助方法
 	FString GetLightStateText(const AKeMuSanPawn* Car) const;
-	void DrawGearDisplay(AKeMuSanPawn* Car, const UFont* Font, float X, float Y);
+
+	// 起步辅助阶段状态单向推进标记
+	bool bRecordedHorn = false;
 };

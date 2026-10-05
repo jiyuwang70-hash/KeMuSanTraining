@@ -1,4 +1,4 @@
-// 科目三考试车 Pawn：手动挡 / 自动挡运动学车辆 + 灯光/信号/安全带/手刹
+// 科目三考试车 Pawn：手动挡 / 自动挡运动学车辆 + 真实光学后视镜系统 + 第一人称座舱
 #pragma once
 
 #include "CoreMinimal.h"
@@ -10,6 +10,8 @@ class USpringArmComponent;
 class UCameraComponent;
 class UStaticMeshComponent;
 class UMaterialInstanceDynamic;
+class USceneCaptureComponent2D;
+class UTextureRenderTarget2D;
 
 UCLASS()
 class KEMUSANTRAINING_API AKeMuSanPawn : public APawn
@@ -19,6 +21,7 @@ class KEMUSANTRAINING_API AKeMuSanPawn : public APawn
 public:
 	AKeMuSanPawn();
 
+	virtual void BeginPlay() override;
 	virtual void Tick(float DeltaSeconds) override;
 	virtual void SetupPlayerInputComponent(UInputComponent* PlayerInputComponent) override;
 
@@ -26,7 +29,7 @@ public:
 	void SetTransmission(ETransmissionType InType) { Transmission = InType; }
 	ETransmissionType GetTransmissionType() const { return Transmission; }
 
-	// ---- 输入（由按键调用） ----
+	// ---- 基础驾驶输入 ----
 	void AxisThrottle(float V);
 	void AxisBrake(float V);
 	void AxisSteer(float V);
@@ -44,12 +47,35 @@ public:
 	void SelectGear(int32 GearIndex); // 0=N 1=R 2..6=1..5挡
 	void CycleGearAuto();  // P/R/N/D cycle for auto
 
+	// ---- 视角切换（第一人称座舱 / 第三人称追尾） ----
+	void ToggleCameraView();
+	bool IsCockpitView() const { return bCockpitView; }
+
+	// ---- 后视镜光学物理与微调系统 ----
+	void ToggleMirrorAdjustMode();
+	void CycleActiveMirror();
+	void AdjustActiveMirror(float DeltaPitch, float DeltaYaw);
+	void ResetActiveMirrorToStandard();
+	void ResetAllMirrorsToStandard();
+
+	bool IsMirrorAdjustMode() const { return bMirrorAdjustMode; }
+	EMirrorType GetActiveMirror() const { return ActiveMirror; }
+	const FMirrorOpticalState& GetMirrorState(EMirrorType Type) const;
+	UTextureRenderTarget2D* GetMirrorRenderTarget(EMirrorType Type) const;
+	void UpdateMirrorOptics();
+
+	// ---- 新手引导与辅助 ----
+	void SetNoviceAssist(bool bEnable) { bNoviceAssist = bEnable; }
+	bool IsNoviceAssistEnabled() const { return bNoviceAssist; }
+
 	// ---- 状态查询 ----
 	float GetSpeedMs() const { return SpeedMs; }
 	float GetSpeedKmh() const { return SpeedMs * 3.6f; }
 	EGear GetGear() const { return Gear; }
 	bool IsHandbrakeOn() const { return bHandbrake; }
+	bool IsHandbrakeEngaged() const { return bHandbrake; }
 	bool IsSeatbeltOn() const { return bSeatbelt; }
+	bool IsSeatbeltFastened() const { return bSeatbelt; }
 	bool IsLowBeamOn() const { return bLowBeam; }
 	bool IsHighBeamOn() const { return bHighBeam; }
 	bool IsFogLampOn() const { return bFogLamp; }
@@ -64,8 +90,12 @@ public:
 	float GetYawDeg() const { return YawDeg; }
 	float GetSteeringAngleDeg() const { return SteeringAngleDeg; }
 	float GetThrottle() const { return ThrottleInput; }
+	float GetThrottleInput() const { return ThrottleInput; }
 	float GetBrake() const { return BrakeInput; }
+	float GetBrakeInput() const { return BrakeInput; }
+	float GetSteeringInput() const { return SteeringInput; }
 	float GetLastHeadCheckTime() const { return LastHeadCheckTime; }
+	float GetHeadCheckTimer() const { return HeadCheckTimer; }
 
 	// 复位到起点（开始新一局考试）
 	void ResetVehicle(const FVector& Loc, const FRotator& Rot);
@@ -89,6 +119,12 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* Cabin = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* Dashboard = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* SteeringWheel = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* WheelFL = nullptr;
@@ -120,11 +156,36 @@ protected:
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* SigR = nullptr;
 
+	// 追尾摄像机
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	USpringArmComponent* SpringArm = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Camera")
 	UCameraComponent* Camera = nullptr;
+
+	// 第一人称主驾座舱摄像机
+	UPROPERTY(VisibleAnywhere, Category = "Camera")
+	UCameraComponent* CockpitCamera = nullptr;
+
+	// 真实光学后视镜捕获组件
+	UPROPERTY(VisibleAnywhere, Category = "Mirror")
+	USceneCaptureComponent2D* LeftMirrorCapture = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Mirror")
+	USceneCaptureComponent2D* RightMirrorCapture = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Mirror")
+	USceneCaptureComponent2D* InteriorMirrorCapture = nullptr;
+
+	// 渲染纹理
+	UPROPERTY(Transient)
+	UTextureRenderTarget2D* LeftMirrorTarget = nullptr;
+
+	UPROPERTY(Transient)
+	UTextureRenderTarget2D* RightMirrorTarget = nullptr;
+
+	UPROPERTY(Transient)
+	UTextureRenderTarget2D* InteriorMirrorTarget = nullptr;
 
 	// ---- 动态材质 ----
 	UMaterialInstanceDynamic* TailMatL = nullptr;
@@ -160,8 +221,19 @@ protected:
 	float StallCooldown = 0.f;
 	float SignalYawAccum = 0.f;
 	float LastHeadCheckTime = -9999.f;
+	float HeadCheckTimer = 0.f;
 	bool bFlashHigh = false;
 	float FlashHighTimer = 0.f;
+
+	// ---- 视角与后视镜状态 ----
+	bool bCockpitView = false;
+	bool bMirrorAdjustMode = false;
+	EMirrorType ActiveMirror = EMirrorType::Left;
+	FMirrorOpticalState LeftMirrorState;
+	FMirrorOpticalState RightMirrorState;
+	FMirrorOpticalState InteriorMirrorState;
+
+	bool bNoviceAssist = false;
 
 	void UpdatePhysics(float DT);
 	void UpdatePhysicsManual(float DT);

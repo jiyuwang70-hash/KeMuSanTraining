@@ -107,7 +107,7 @@ KeMuSanTraining/
 ### 2. 性能与渲染架构优化
 - **HISM 批量实例化**：`ARoadBuilder` 生成约 1.2km 的复杂路网、双黄线、斑马线、路缘石及安全护栏时，自动按材质与静态网格聚合为 `UHierarchicalInstancedStaticMeshComponent`。将全城近 3000 个独立 Actor 组件合并至少量批次中，大幅减少 Draw Call。
 - **后视镜时间切片渲染**：座舱内左外镜、右外镜与内后视镜分别采用独立反射相机。为减轻集成显卡负担，系统采用 Round-Robin 时间切片调度，单帧仅捕获一面镜子（总刷新率限制在 30Hz，单镜约 10Hz），实现流畅运行与镜面动态车流的兼顾。
-- **实测运行帧率记录**：在目标平台（Intel Core Ultra 5 225H / Intel Arc 130T 集成显卡、1280x720 分辨率、Lit 完整真实光照、HISM 批量实例化与 3 面动态光学后视镜全开）下，通过官方 CSV Profiler 工具在 `full_mix` 最重交通负载场景下执行连续物理墙钟采样。采样处于包含每 4 秒定时截图的真实 `-autotest` 完整实机运行管线中（非独立专门跑分工具），严格剔除前 20 秒冷启动（预热耗时 20.058s），在后续 30.032 秒物理墙钟时间内有效捕获 1466 帧，实测平均帧率为 **48.814 FPS**（原始 CSV 数据见 `Saved/Profiling/CSV/fps-full-mix-*.csv`），运行流畅稳定。
+- **实测运行帧率记录**：在目标平台（Intel Core Ultra 5 225H / Intel Arc 130T 集成显卡、1280x720 分辨率、Lit 完整真实光照、HISM 批量实例化与 3 面动态光学后视镜全开）下，通过官方 CSV Profiler 工具在 `full_mix` 综合交通场景下执行连续物理墙钟采样。采样处于包含每 4 秒定时截图的真实 `-autotest` 完整实机运行管线中（非独立专门跑分工具），严格剔除前 20 秒冷启动（预热耗时 20.058s），在后续 30.032 秒物理墙钟时间内有效捕获 1466 帧，实测平均帧率为 **48.814 FPS**（原始 CSV 数据见 `Saved/Profiling/CSV/fps-full-mix-*.csv`）。
 
 ---
 
@@ -122,7 +122,7 @@ KeMuSanTraining/
 覆盖 `empty`、`crosswalk_yield`、`follow_and_meet`、`full_mix` 四大交通场景，断言行人避让、社会车防追尾和红绿灯通行。
 
 ### 3. 实机驾驶与镜头展示（`run_showcase_capture.ps1`）
-自动捕获实机运行画面：主菜单大标题、真实行车追尾动态、第一人称镂空方向盘与后视镜、镜面调节光学变化对比、90° 转角与 180° 掉头跟车相机对准等全套验证截图。
+自动捕获实机运行画面：主菜单大标题、真实行车追尾动态、第一人称镂空方向盘与后视镜、镜面调节光学变化对比、90° 弯道与 180° 掉头静态镜头测试等全套验证截图。
 
 ---
 
@@ -132,13 +132,17 @@ KeMuSanTraining/
 | :---: | :---: |
 | ![主菜单](docs/screenshots/01_main_menu.png) | ![真实驾驶](docs/screenshots/02_real_driving.png) |
 
-| 第一人称座舱（中空三辐方向盘与三面镜） | 90° 弯道跟车摄像机物理对齐 |
+| 第一人称座舱（中空三辐方向盘与三面镜） | 90° 静态镜头测试（北向右车道对齐） |
 | :---: | :---: |
-| ![座舱视角](docs/screenshots/03_cockpit_view.png) | ![90度弯道对齐](docs/screenshots/05_corner_90deg.png) |
+| ![座舱视角](docs/screenshots/03_cockpit_view.png) | ![90度静态镜头测试](docs/screenshots/05_corner_90deg.png) |
 
-| 后视镜微调 - 标准到位（地平线 1/2，车身 1/4） | 后视镜微调 - 偏角对比（同位静止，反射变化明显） |
+| 后视镜微调 - 默认镜面角度 | 后视镜微调 - 偏角对比（同位静止反射对比） |
 | :---: | :---: |
-| ![后视镜标准](docs/screenshots/04a_mirror_standard.png) | ![后视镜微调对比](docs/screenshots/04b_mirror_adjusted.png) |
+| ![后视镜默认角度](docs/screenshots/04a_mirror_standard.png) | ![后视镜微调对比](docs/screenshots/04b_mirror_adjusted.png) |
+
+| 180° 静态镜头测试（西向右车道掉头朝向） | |
+| :---: | :---: |
+| ![180度静态镜头测试](docs/screenshots/06_uturn_180deg.png) | |
 
 ---
 

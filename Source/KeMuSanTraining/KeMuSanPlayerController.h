@@ -59,5 +59,14 @@ protected:
 	int32 InputChainStep = 0;
 	int32 InputChainSubStep = 0;
 	int32 InputChainFailures = 0;
+	float InputChainJourneyTimer = 0.f;
+	FVector InputChainStartLocation = FVector::ZeroVector;
 	void TickInputChainTest(float DeltaSeconds);
+
+	// 独立考试模式启动核验（-test-exam-start=manual/auto 真实按键注入）
+	bool bExamStartTesting = false;
+	FString ExamStartTarget;
+	int32 ExamStartStep = 0;
+	float ExamStartTimer = 0.f;
+	void TickExamStartTest(float DeltaSeconds);
 };

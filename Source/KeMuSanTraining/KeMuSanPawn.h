@@ -64,10 +64,6 @@ public:
 	UTextureRenderTarget2D* GetMirrorRenderTarget(EMirrorType Type) const;
 	void UpdateMirrorOptics();
 
-	// ---- 新手引导与辅助 ----
-	void SetNoviceAssist(bool bEnable) { bNoviceAssist = bEnable; }
-	bool IsNoviceAssistEnabled() const { return bNoviceAssist; }
-
 	// ---- 状态查询 ----
 	float GetSpeedMs() const { return SpeedMs; }
 	float GetSpeedKmh() const { return SpeedMs * 3.6f; }
@@ -91,6 +87,9 @@ public:
 	float GetSteeringAngleDeg() const { return SteeringAngleDeg; }
 	float GetThrottle() const { return ThrottleInput; }
 	float GetThrottleInput() const { return ThrottleInput; }
+	float GetSmoothedThrottle() const { return SmoothedThrottle; }
+	void SetDrivable(bool bInDrivable) { bDrivable = bInDrivable; }
+	bool IsDrivable() const { return bDrivable; }
 	float GetBrake() const { return BrakeInput; }
 	float GetBrakeInput() const { return BrakeInput; }
 	float GetSteeringInput() const { return SteeringInput; }
@@ -102,6 +101,19 @@ public:
 
 	// 强制停车（驶出路线终点时）
 	void ForceStop();
+
+	// 供展示测试专用：设置绝对位置与朝向，并同步内部 YawDeg 与物理速度，彻底冻结动力防漂移
+	void SetTestPose(const FVector& LocCm, const FRotator& Rot)
+	{
+		SetActorLocationAndRotation(LocCm, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+		YawDeg = Rot.Yaw;
+		SpeedMs = 0.f;
+		ThrottleInput = 0.f;
+		SmoothedThrottle = 0.f;
+		BrakeInput = 0.f;
+		SteeringInput = 0.f;
+		bDrivable = false;
+	}
 
 	// 调试俯视视角（自动测试用）
 	void ApplyDebugCamera();
@@ -137,6 +149,24 @@ protected:
 
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* WheelRR = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* RimFL = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* RimFR = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* RimRL = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	UStaticMeshComponent* RimRR = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	class UWidgetComponent* RoofSignWidgetF = nullptr;
+
+	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
+	class UWidgetComponent* RoofSignWidgetR = nullptr;
 
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* LightFL = nullptr;
@@ -197,11 +227,13 @@ protected:
 
 	// ---- 输入状态 ----
 	float ThrottleInput = 0.f;
+	float SmoothedThrottle = 0.f;
 	float PrevThrottle = 0.f;
 	float BrakeInput = 0.f;
 	float SteeringInput = 0.f;
 	bool bHandbrake = true;
 	bool bSeatbelt = false;
+	bool bDrivable = false;
 	bool bLowBeam = false;
 	bool bHighBeam = false;
 	bool bFogLamp = false;
@@ -233,7 +265,11 @@ protected:
 	FMirrorOpticalState RightMirrorState;
 	FMirrorOpticalState InteriorMirrorState;
 
-	bool bNoviceAssist = false;
+	// 轮流切片刷新控制（Round-Robin 30Hz 总频次，单面镜 ~10Hz）
+	float MirrorCaptureTimer = 0.f;
+	int32 NextMirrorToCapture = 0;
+	void CaptureAllMirrorsImmediate();
+
 
 	void UpdatePhysics(float DT);
 	void UpdatePhysicsManual(float DT);

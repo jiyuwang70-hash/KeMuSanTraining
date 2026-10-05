@@ -103,11 +103,22 @@ void ARoadBuilder::BeginPlay()
 	BuildStreetFurniture();
 	BuildCityBlocks();
 
-	UE_LOG(LogTemp, Log, TEXT("[KeMuSan] road builder done, pieces=%d"), PiecesPlaced);
+	FinishBuild();
+
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSan] road builder done, pieces=%d, hism_groups=%d"), PiecesPlaced, HISMComponents.Num());
 }
 
 void ARoadBuilder::FinishBuild()
 {
+	// 刷新所有 HISM 实例树，批量提交渲染几何
+	for (UHierarchicalInstancedStaticMeshComponent* Comp : HISMComponents)
+	{
+		if (Comp)
+		{
+			Comp->BuildTreeIfOutdated(true, true);
+		}
+	}
+
 	// 天光使用 CapturedScene，需要在场景搭建完成后重新捕捉一次，
 	// 否则使用引擎默认 cubemap，整体色调会偏蓝/发灰
 	if (Sky)
@@ -140,25 +151,44 @@ UMaterialInstanceDynamic* ARoadBuilder::GetMat(const FLinearColor& Color)
 UStaticMeshComponent* ARoadBuilder::AddPiece(UStaticMesh* Mesh, const FVector& Loc, const FVector& Extents,
 	const FLinearColor& Color, const FRotator& Rot, bool bRaiseZ)
 {
-	UStaticMeshComponent* C = NewObject<UStaticMeshComponent>(this);
-	C->SetStaticMesh(Mesh);
-	C->SetCollisionEnabled(ECollisionEnabled::NoCollision);
-	C->SetMobility(EComponentMobility::Movable);
-	C->SetCastShadow(true);
-	C->RegisterComponent();
+	if (!Mesh)
+	{
+		return nullptr;
+	}
+
+	UMaterialInstanceDynamic* Mat = GetMat(Color);
+	const FHISMGroupKey Key{ Mesh, Mat };
+
+	UHierarchicalInstancedStaticMeshComponent* HISM = nullptr;
+	if (UHierarchicalInstancedStaticMeshComponent** Found = HISMMap.Find(Key))
+	{
+		HISM = *Found;
+	}
+	else
+	{
+		HISM = NewObject<UHierarchicalInstancedStaticMeshComponent>(this);
+		HISM->SetStaticMesh(Mesh);
+		HISM->SetMaterial(0, Mat);
+		HISM->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		HISM->SetMobility(EComponentMobility::Static);
+		HISM->SetCastShadow(true);
+		HISM->AttachToComponent(Root, FAttachmentTransformRules::KeepRelativeTransform);
+		HISM->RegisterComponent();
+		HISMMap.Add(Key, HISM);
+		HISMComponents.Add(HISM);
+	}
+
 	FVector UseLoc = Loc * 100.0f;
 	if (bRaiseZ)
 	{
 		// Layer-based Z offset in centimeters to avoid Z-fighting
 		UseLoc.Z += PieceLayerZ * 100.0f;
 	}
-	C->SetWorldLocation(UseLoc);
-	C->SetWorldScale3D(Extents);
-	C->SetWorldRotation(Rot);
-	C->SetMaterial(0, GetMat(Color));
-	C->AttachToComponent(Root, FAttachmentTransformRules::KeepWorldTransform);
+
+	const FTransform InstanceTransform(Rot, UseLoc, Extents);
+	HISM->AddInstance(InstanceTransform, true);
 	++PiecesPlaced;
-	return C;
+	return nullptr;
 }
 
 UStaticMeshComponent* ARoadBuilder::AddBox(const FVector& Loc, const FVector& Extents, const FLinearColor& Color,

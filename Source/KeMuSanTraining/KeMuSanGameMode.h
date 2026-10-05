@@ -48,6 +48,8 @@ public:
 	UPROPERTY(BlueprintReadOnly, Category = "Exam")
 	bool bGameStarted = false;
 
+	virtual void Tick(float DeltaSeconds) override;
+
 	UPROPERTY(BlueprintReadOnly, Category = "Exam")
 	bool bPaused = false;
 
@@ -60,5 +62,18 @@ protected:
 
 	FTimerHandle AutoShotTimer;
 	FTimerHandle TrafficRegressionExitTimer;
-	FTimerHandle ShowcaseTimer;
+
+	bool bShowcaseCapturing = false;
+	int32 ShowcasePhase = 0;
+	float ShowcaseTimerSec = 0.f;
+	FVector ShowcaseStartLoc = FVector::ZeroVector;
+	FVector ShowcaseStopLoc = FVector::ZeroVector;
+	bool bShot1Ok = false;
+	bool bShot2Ok = false;
+	bool bShot3Ok = false;
+	bool bShot4aOk = false;
+	bool bShot4bOk = false;
+	bool bShot5Ok = false;
+	bool bShot6Ok = false;
+	void TickShowcaseCapture(float DeltaSeconds);
 };

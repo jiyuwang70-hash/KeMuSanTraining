@@ -7,6 +7,7 @@
 #include "Engine/World.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/PlayerController.h"
+#include "Fonts/SlateFontInfo.h"
 
 #include "KeMuSanGameMode.h"
 #include "KeMuSanPawn.h"
@@ -81,6 +82,42 @@ void AKeMuSanHUD::DrawTextPixel(const FString& Text, float X, float Y, const FLi
 	Canvas->DrawText(Font, *Text, FMath::RoundToFloat(X), FMath::RoundToFloat(Y), 1.0f, 1.0f, FFontRenderInfo());
 }
 
+void AKeMuSanHUD::DrawTextSlateLarge(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 PointSize)
+{
+	if (!Canvas || !Font || Text.IsEmpty())
+	{
+		return;
+	}
+	// 基于 FSlateFontInfo 重新栅格化矢量字体（如 Size=26~28px），Scale=1，无双层黑影模糊，笔画极致锐利
+	FSlateFontInfo FontInfo = Font->GetLegacySlateFontInfo();
+	FontInfo.Size = PointSize;
+	FCanvasTextItem Item(FVector2D(FMath::RoundToFloat(X), FMath::RoundToFloat(Y)), FText::FromString(Text), FontInfo, Color);
+	Item.Scale = FVector2D(1.0f, 1.0f);
+	Item.BlendMode = SE_BLEND_Translucent;
+	Canvas->DrawItem(Item);
+}
+
+float AKeMuSanHUD::MeasureTextSlate(const FString& Text, const UFont* Font, int32 PointSize)
+{
+	if (Text.IsEmpty())
+	{
+		return 0.f;
+	}
+	float Width = 0.f;
+	for (const TCHAR Ch : Text)
+	{
+		if (Ch > 127)
+		{
+			Width += static_cast<float>(PointSize) * 1.02f;
+		}
+		else
+		{
+			Width += static_cast<float>(PointSize) * 0.56f;
+		}
+	}
+	return Width;
+}
+
 void AKeMuSanHUD::DrawTextBig(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 IntScale)
 {
 	if (!Canvas || !Font || Text.IsEmpty())
@@ -120,7 +157,6 @@ void AKeMuSanHUD::DrawTextShadowed(const FString& Text, float X, float Y, float 
 	}
 	const float RX = FMath::RoundToFloat(X);
 	const float RY = FMath::RoundToFloat(Y);
-	// 若 Scale 接近 1.0，强制使用 Pixel-Perfect 1.0f，消除模糊
 	const float S = (FMath::Abs(Scale - 1.0f) < 0.25f) ? 1.0f : Scale;
 	const float Offset = (S >= 2.0f) ? 2.0f : 1.0f;
 	Canvas->SetLinearDrawColor(FLinearColor(0.f, 0.f, 0.f, 0.90f));
@@ -224,8 +260,13 @@ void AKeMuSanHUD::DrawMenu()
 	DrawFilledRect(Canvas, 0.f, 0.f, Canvas->SizeX, Canvas->SizeY, FLinearColor(0.04f, 0.06f, 0.09f, 0.90f));
 
 	// 顶部大标题：专用高对比度深曜石托板（Title Plaque），彻底隔绝背景杂色干扰
+	const FString Title = TEXT("科目三驾驶训练");
+	const FString Subtitle = TEXT("全长约 1.2km 城市考道 · 动态社会交通流 · 真实光学后视镜 · 14项训练评判");
+
+	// 标题短化并置于 680px 宽裕底板正中，彻底杜绝任何字体 fallback 导致的边缘溢出
+	const float TitleW = MeasureTextSlate(Title, BigFont, 26);
 	const float TitlePlaqueW = 680.f;
-	const float TitlePlaqueH = 46.f;
+	const float TitlePlaqueH = 52.f;
 	const float TitlePlaqueX = CX - TitlePlaqueW * 0.5f;
 	const float TitlePlaqueY = CY - 295.f;
 
@@ -233,12 +274,7 @@ void AKeMuSanHUD::DrawMenu()
 	DrawRoundedCard(Canvas, TitlePlaqueX, TitlePlaqueY, TitlePlaqueW, TitlePlaqueH, FLinearColor(0.02f, 0.04f, 0.07f, 0.96f), FLinearColor(0.85f, 0.72f, 0.38f, 0.90f), 1.5f);
 	DrawFilledRect(Canvas, TitlePlaqueX + 3.f, TitlePlaqueY + 2.f, TitlePlaqueW - 6.f, 2.f, FLinearColor(1.0f, 0.92f, 0.55f, 0.50f));
 
-	const FString Title = TEXT("科目三道路驾驶技能仿真教学系统");
-	const FString Subtitle = TEXT("全长 1.5km 真实考场路线 · 动态交通流 · 真实光学后视镜 · 国标驾驶人评判规范");
-
-	// 大标题：单层 1:1 Pixel-Perfect 纯净钛金白渲染，严禁双层黑影叠加渗色，笔画如刀刻般锐利
-	const float TitleW = BigFont->GetStringSize(*Title);
-	DrawTextPixel(Title, CX - TitleW * 0.5f, TitlePlaqueY + 10.f, FLinearColor(1.0f, 0.97f, 0.90f, 1.0f), BigFont);
+	DrawTextSlateLarge(Title, CX - TitleW * 0.5f, TitlePlaqueY + 12.f, FLinearColor(1.0f, 0.97f, 0.90f, 1.0f), BigFont, 26);
 
 	// 副标题：冰青白高对比排布在托板下方
 	const float SubW = SmallFont->GetStringSize(*Subtitle);
@@ -258,9 +294,9 @@ void AKeMuSanHUD::DrawMenu()
 
 	const FString PracticeHighlights[] =
 	{
-		TEXT("• 实时考点步骤语音与向导提示，轻松掌握考规"),
+		TEXT("• 实时考点步骤与提示音向导，轻松掌握考规流程"),
 		TEXT("• 动态道路限速智能预警，靠边停车30cm实时标尺"),
-		TEXT("• 自动记录起步顺序与观察动作，不计扣分失败"),
+		TEXT("• 真实操作起步顺序与观察动作，不计扣分失败"),
 		TEXT("• 支持随时按 T 校准后视镜，按 V 体验座舱第一人称")
 	};
 	float TextY = CardY + 54.f;
@@ -280,8 +316,8 @@ void AKeMuSanHUD::DrawMenu()
 
 	const FString ExamHighlights[] =
 	{
-		TEXT("• 真实夜间灯光模拟随机抽考（5道语音必考题）"),
-		TEXT("• 完整16个必考评判项目严苛触发，真实社会车流交互"),
+		TEXT("• 真实夜间灯光模拟随机抽考（8道必考题，文字与提示音）"),
+		TEXT("• 完整14项必考评判严苛触发，真实社会车流动态交互"),
 		TEXT("• 100分制严格评分，90分及格，重大违规直接扣100分"),
 		TEXT("• 考验真实独立应变与驾驶习惯，真实还原考场压力")
 	};
@@ -292,7 +328,7 @@ void AKeMuSanHUD::DrawMenu()
 		TextY += 32.f;
 	}
 	DrawRoundedCard(Canvas, CardRightX + 24.f, CardY + CardH - 52.f, CardW - 48.f, 38.f, FLinearColor(0.22f, 0.28f, 0.42f, 0.95f), ColCyan, 1.5f);
-	const FString StartExamBtn = TEXT("按 [F1] 手动挡C1  /  [F2] 自动挡C2");
+	const FString StartExamBtn = TEXT("按 [F1] 手动挡C1考试  /  [F2] 自动挡C2考试");
 	DrawTextPixel(StartExamBtn, CardRightX + (CardW - SmallFont->GetStringSize(*StartExamBtn)) * 0.5f, CardY + CardH - 43.f, ColYellow, SmallFont);
 
 	// 下方控制按键简明导览（紧凑高对比底栏）
@@ -401,7 +437,8 @@ void AKeMuSanHUD::DrawStepGuide(AExamController* EC, AKeMuSanPawn* Car)
 
 	const float TotalW = 840.f;
 	const float X0 = (Canvas->SizeX - TotalW) * 0.5f;
-	const float Y0 = 90.f;
+	// 独立放置在 y=205.f 区域，彻底避开上方中央后视镜 (y:92~172)，保证中央镜视界完全通透
+	const float Y0 = 205.f;
 	const float StepW = TotalW / 6.f;
 
 	DrawRoundedCard(Canvas, X0, Y0, TotalW, 36.f, FLinearColor(0.04f, 0.06f, 0.09f, 0.88f), ColDarkGray);
@@ -764,30 +801,121 @@ void AKeMuSanHUD::DrawScorePanel(AExamController* EC)
 
 void AKeMuSanHUD::DrawProgressList(AExamController* EC)
 {
+	if (!EC) return;
 	UFont* SmallFont = GEngine->GetMediumFont();
 	const TArray<FZoneStatus>& Zones = EC->GetZoneStatuses();
+	const int32 TotalZones = Zones.Num();
+	if (TotalZones == 0) return;
 
-	const float ListW = 190.f;
-	const float ListH = FMath::Min(310.f, Zones.Num() * 22.f + 26.f);
+	// 统计完成与跳过项
+	int32 CompletedCount = 0;
+	int32 SkippedCount = 0;
+	int32 ActiveIndex = INDEX_NONE;
+
+	// 第一优先级：查找实际正在考核中 (State == 1) 的考点
+	for (int32 i = 0; i < TotalZones; ++i)
+	{
+		if (Zones[i].State == 2)
+		{
+			CompletedCount++;
+		}
+		else if (Zones[i].State == 3)
+		{
+			SkippedCount++;
+		}
+		else if (Zones[i].State == 1 && ActiveIndex == INDEX_NONE)
+		{
+			ActiveIndex = i;
+		}
+	}
+
+	// 第二优先级：若无进行中项目，查找首个适用且未完成 (State == 0) 的考点
+	if (ActiveIndex == INDEX_NONE)
+	{
+		for (int32 i = 0; i < TotalZones; ++i)
+		{
+			if (Zones[i].State == 0)
+			{
+				ActiveIndex = i;
+				break;
+			}
+		}
+	}
+
+	const float ListW = 200.f;
+	const float ListH = 116.f;
 	const float ListX = 18.f;
 	const float ListY = 205.f;
 
-	DrawRoundedCard(Canvas, ListX, ListY, ListW, ListH, FLinearColor(0.04f, 0.06f, 0.09f, 0.85f), ColDarkGray);
-	DrawTextPixel(TEXT("评判项目进度"), ListX + 12.f, ListY + 8.f, ColCyan, SmallFont);
+	// 紧凑高质感底板，高度仅116px，消除遮挡
+	DrawRoundedCard(Canvas, ListX, ListY, ListW, ListH, FLinearColor(0.04f, 0.06f, 0.09f, 0.90f), ColDarkGray);
 
-	float ItemY = ListY + 30.f;
-	for (const FZoneStatus& Z : Zones)
+	// 顶部：进度概览与细微进度条（明确标识跳过项，绝不冒充合格通过）
+	FString ProgressHeader;
+	if (SkippedCount > 0)
 	{
-		FString Icon;
-		FLinearColor Col;
-		switch (Z.State)
+		ProgressHeader = FString::Printf(TEXT("考核进度: %d/%d (跳过%d)"), CompletedCount, TotalZones, SkippedCount);
+	}
+	else
+	{
+		ProgressHeader = FString::Printf(TEXT("考核进度: %d / %d 项"), CompletedCount, TotalZones);
+	}
+	DrawTextPixel(ProgressHeader, ListX + 12.f, ListY + 8.f, ColCyan, SmallFont);
+
+	const float BarW = ListW - 24.f;
+	DrawFilledRect(Canvas, ListX + 12.f, ListY + 28.f, BarW, 4.f, FLinearColor(0.15f, 0.18f, 0.22f, 0.85f));
+	const float Ratio = FMath::Clamp(static_cast<float>(CompletedCount) / static_cast<float>(TotalZones), 0.f, 1.f);
+	DrawFilledRect(Canvas, ListX + 12.f, ListY + 28.f, BarW * Ratio, 4.f, ColGreen);
+
+	// 中部：当前进行中考点（高亮醒目黄/绿）
+	DrawTextPixel(TEXT("当前:"), ListX + 12.f, ListY + 40.f, ColGray, SmallFont);
+	if (ActiveIndex != INDEX_NONE && Zones.IsValidIndex(ActiveIndex))
+	{
+		const FString CurName = Zones[ActiveIndex].Name;
+		FString CurStateStr;
+		FLinearColor StateCol = ColYellow;
+		if (Zones[ActiveIndex].State == 1)
 		{
-		case 1: Icon = TEXT("▶"); Col = ColYellow; break;
-		case 2: Icon = TEXT("✓"); Col = ColGreen; break;
-		default: Icon = TEXT("·"); Col = ColGray; break;
+			CurStateStr = TEXT("[考核中]");
+			StateCol = ColGreen;
 		}
-		DrawTextPixel(FString::Printf(TEXT("%s %s"), *Icon, *Z.Name), ListX + 12.f, ItemY, Col, SmallFont);
-		ItemY += 22.f;
+		else if (Zones[ActiveIndex].State == 3)
+		{
+			CurStateStr = TEXT("[练习跳过]");
+			StateCol = ColGray;
+		}
+		else
+		{
+			CurStateStr = TEXT("[待到达]");
+			StateCol = ColYellow;
+		}
+		DrawTextPixel(FString::Printf(TEXT("▶ %d.%s %s"), ActiveIndex + 1, *CurName, *CurStateStr), ListX + 12.f, ListY + 58.f, StateCol, SmallFont);
+
+		// 下部：查找后续首个未完成且未跳过的项目作为预告
+		int32 NextIndex = INDEX_NONE;
+		for (int32 j = ActiveIndex + 1; j < TotalZones; ++j)
+		{
+			if (Zones[j].State != 2 && Zones[j].State != 3)
+			{
+				NextIndex = j;
+				break;
+			}
+		}
+
+		if (NextIndex != INDEX_NONE && Zones.IsValidIndex(NextIndex))
+		{
+			DrawTextPixel(FString::Printf(TEXT("下一项: %d.%s"), NextIndex + 1, *Zones[NextIndex].Name), ListX + 12.f, ListY + 86.f, ColGray, SmallFont);
+		}
+		else
+		{
+			DrawTextPixel(TEXT("路线终点：按要求平稳靠边停直"), ListX + 12.f, ListY + 86.f, ColGreen, SmallFont);
+		}
+	}
+	else
+	{
+		// 全部完成
+		DrawTextPixel(TEXT("▶ 全部训练项目已完成"), ListX + 12.f, ListY + 58.f, ColGreen, SmallFont);
+		DrawTextPixel(TEXT("路线终点：按要求平稳靠边停直"), ListX + 12.f, ListY + 86.f, ColGreen, SmallFont);
 	}
 }
 

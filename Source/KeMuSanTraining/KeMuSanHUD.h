@@ -29,6 +29,8 @@ protected:
 	void DrawTextBig(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 IntScale = 2);
 	void DrawTextShadowedPixel(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font);
 	void DrawTextShadowed(const FString& Text, float X, float Y, float Scale, const FLinearColor& Color, const UFont* Font);
+	void DrawTextSlateLarge(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 PointSize = 26);
+	float MeasureTextSlate(const FString& Text, const UFont* Font, int32 PointSize = 26);
 
 	// 核心界面子系统
 	void DrawMenu();

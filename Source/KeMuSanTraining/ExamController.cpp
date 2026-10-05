@@ -93,10 +93,6 @@ void AExamController::BeginExam(bool bIsExam)
 {
 	bPractice = !bIsExam;
 	PlayMode = bIsExam ? EGamePlayMode::SimulatedExam : EGamePlayMode::GuidedPractice;
-	if (Car)
-	{
-		Car->SetNoviceAssist(!bIsExam);
-	}
 	Score = 100;
 	Deductions.Reset();
 	bFailIssued = false;
@@ -405,6 +401,11 @@ void AExamController::Tick(float DeltaSeconds)
 void AExamController::SetPhase(EExamPhase NewPhase)
 {
 	Phase = NewPhase;
+	if (Car)
+	{
+		const bool bAllowDrive = (NewPhase == EExamPhase::Ready || NewPhase == EExamPhase::Driving || NewPhase == EExamPhase::PullOver);
+		Car->SetDrivable(bAllowDrive);
+	}
 }
 
 void AExamController::SetPrompt(const FString& Text)
@@ -615,7 +616,14 @@ void AExamController::UpdateProjection()
 void AExamController::UpdatePrep(float DT)
 {
 	MarkZoneByName(TEXT("上车准备"), 1);
-	SetPrompt(TEXT("上车准备：按F系安全带 → 按M观察后视镜 → 按空格拉紧手刹"));
+	if (Car && Car->IsHandbrakeOn())
+	{
+		SetPrompt(TEXT("上车准备：按F系安全带 → 按M观察后视镜 → 保持手刹等待系统就绪"));
+	}
+	else
+	{
+		SetPrompt(TEXT("上车准备：按F系安全带 → 按M观察后视镜 → 按空格拉紧手刹"));
+	}
 
 	if (!bPrepSeatbeltOk && Car->IsSeatbeltOn())
 	{
@@ -642,6 +650,8 @@ void AExamController::UpdatePrep(float DT)
 			}
 			else
 			{
+				MarkZoneByName(TEXT("灯光模拟"), 3);
+				MarkZoneByName(TEXT("起步"), 1);
 				SetPhase(EExamPhase::Ready);
 				SetPrompt(TEXT("自由练习：W油门起步，A/D转向，1挂1挡，空格松手刹"));
 			}
@@ -727,6 +737,7 @@ void AExamController::SubmitLightAnswer(int32 Answer)
 
 void AExamController::UpdateReady(float DT)
 {
+	MarkZoneByName(TEXT("起步"), 1);
 	if (Car->IsLeftSignalOn())
 	{
 		bReadySignalOk = true;
@@ -1693,10 +1704,6 @@ void AExamController::SetPlayMode(EGamePlayMode InMode)
 {
 	PlayMode = InMode;
 	bPractice = (InMode == EGamePlayMode::GuidedPractice);
-	if (Car)
-	{
-		Car->SetNoviceAssist(bPractice);
-	}
 }
 
 float AExamController::GetCurrentSpeedLimit() const

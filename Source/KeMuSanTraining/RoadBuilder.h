@@ -6,6 +6,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
 #include "RoadLayout.h"
+#include "Components/HierarchicalInstancedStaticMeshComponent.h"
 #include "RoadBuilder.generated.h"
 
 class UStaticMeshComponent;
@@ -16,6 +17,22 @@ class UDirectionalLightComponent;
 class USkyLightComponent;
 class USkyAtmosphereComponent;
 class UExponentialHeightFogComponent;
+
+struct FHISMGroupKey
+{
+	UStaticMesh* Mesh = nullptr;
+	UMaterialInterface* Material = nullptr;
+
+	bool operator==(const FHISMGroupKey& Other) const
+	{
+		return Mesh == Other.Mesh && Material == Other.Material;
+	}
+};
+
+FORCEINLINE uint32 GetTypeHash(const FHISMGroupKey& Key)
+{
+	return HashCombine(GetTypeHash(Key.Mesh), GetTypeHash(Key.Material));
+}
 
 UCLASS()
 class KEMUSANTRAINING_API ARoadBuilder : public AActor
@@ -63,6 +80,11 @@ protected:
 	int32 PiecesPlaced = 0;
 
 	TMap<uint32, UMaterialInstanceDynamic*> MatCache;
+
+	UPROPERTY()
+	TArray<UHierarchicalInstancedStaticMeshComponent*> HISMComponents;
+
+	TMap<FHISMGroupKey, UHierarchicalInstancedStaticMeshComponent*> HISMMap;
 
 	// ---- 放置工具（自动缓存材质；Extents 为米制全尺寸）----
 	UStaticMeshComponent* AddPiece(UStaticMesh* Mesh, const FVector& Loc, const FVector& Extents,

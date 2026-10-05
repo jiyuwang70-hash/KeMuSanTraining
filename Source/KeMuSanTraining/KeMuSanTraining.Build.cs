@@ -12,7 +12,10 @@ public class KeMuSanTraining : ModuleRules
 			"CoreUObject",
 			"Engine",
 			"InputCore",
-			"AudioExtensions"
+			"AudioExtensions",
+			"Slate",
+			"SlateCore",
+			"UMG"
 		});
 	}
 }

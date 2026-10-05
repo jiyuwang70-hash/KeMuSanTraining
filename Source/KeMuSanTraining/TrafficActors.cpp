@@ -77,7 +77,7 @@ AAICar::AAICar()
 		UStaticMeshComponent* W = CreateDefaultSubobject<UStaticMeshComponent>(Name);
 		W->SetStaticMesh(CylAsset.Object);
 		W->SetRelativeLocation(Loc);
-		W->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+		W->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
 		W->SetRelativeScale3D(FVector(0.65f, 0.65f, 0.22f));
 		W->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		W->SetupAttachment(Root);
@@ -408,7 +408,7 @@ ABicycle::ABicycle()
 		Comp = CreateDefaultSubobject<UStaticMeshComponent>(Name);
 		Comp->SetStaticMesh(CylAsset.Object);
 		Comp->SetRelativeLocation(Loc);
-		Comp->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+		Comp->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
 		Comp->SetRelativeScale3D(FVector(0.64f, 0.64f, 0.06f));
 		Comp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		Comp->SetupAttachment(Root);

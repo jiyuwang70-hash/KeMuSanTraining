@@ -31,6 +31,16 @@ void AKeMuSanPlayerController::BeginPlay()
 		InputChainFailures = 0;
 		UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] started automated input chain verification via native PlayerInput/InputKey"));
 	}
+
+	FString ExamMode;
+	if (FParse::Value(FCommandLine::Get(), TEXT("test-exam-start="), ExamMode))
+	{
+		bExamStartTesting = true;
+		ExamStartTarget = ExamMode.ToLower();
+		ExamStartStep = 0;
+		ExamStartTimer = 0.f;
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanExamStart] started exam start verification for target: %s"), *ExamStartTarget);
+	}
 }
 
 void AKeMuSanPlayerController::Tick(float DeltaSeconds)
@@ -40,6 +50,10 @@ void AKeMuSanPlayerController::Tick(float DeltaSeconds)
 	if (bInputChainTesting)
 	{
 		TickInputChainTest(DeltaSeconds);
+	}
+	if (bExamStartTesting)
+	{
+		TickExamStartTest(DeltaSeconds);
 	}
 }
 
@@ -315,13 +329,15 @@ AKeMuSanPawn* AKeMuSanPlayerController::GetTrainingPawn() const
 void AKeMuSanPlayerController::TickInputChainTest(float DeltaSeconds)
 {
 	InputChainTimer += DeltaSeconds;
-	if (InputChainTimer < 0.12f)
+	const bool bContinuousStep = (InputChainStep == 19 || (InputChainStep == 20 && InputChainSubStep == 2) || InputChainStep == 22 || InputChainStep == 23);
+	if (!bContinuousStep && InputChainTimer < 0.10f)
 	{
 		return;
 	}
 	InputChainTimer = 0.f;
 
 	AKeMuSanGameMode* GM = GetGameMode();
+	AExamController* EC = GetExamController();
 	AKeMuSanPawn* Car = GetTrainingPawn();
 
 	switch (InputChainStep)
@@ -685,7 +701,253 @@ void AKeMuSanPlayerController::TickInputChainTest(float DeltaSeconds)
 		}
 		break;
 
-	case 16: // Step 16: 汇总结果与判定
+	case 16: // Step 16: 保持/拉紧手刹（确认进入标准驻车准备状态）
+		if (InputChainSubStep == 0)
+		{
+			if (Car && Car->IsHandbrakeEngaged())
+			{
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step16_ensure_handbrake_engaged PASS (AlreadyEngaged)"));
+				InputChainStep = 17;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+			else
+			{
+				InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Pressed, 1.0));
+				InputChainSubStep = 1;
+			}
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && Car->IsHandbrakeEngaged();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step16_ensure_handbrake_engaged %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 17;
+			InputChainSubStep = 0;
+			InputChainJourneyTimer = 0.f;
+		}
+		break;
+
+	case 17: // Step 17: F 键系安全带（上车准备核心考点）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::F, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::F, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && Car->IsSeatbeltOn();
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step17_f_seatbelt %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 18;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 18: // Step 18: M 键侧头观察（上车准备核心考点）
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::M, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::M, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else
+		{
+			const bool bOk = Car && (Car->GetHeadCheckTimer() > 0.f);
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step18_m_headcheck %s"), bOk ? TEXT("PASS") : TEXT("FAIL"));
+			InputChainStep = 19;
+			InputChainSubStep = 0;
+			InputChainJourneyTimer = 0.f;
+		}
+		break;
+
+	case 19: // Step 19: 保持手刹拉紧等待 Prep 转 Ready（EC 累计 0.8s 自动切入 Ready）
+		InputChainJourneyTimer += DeltaSeconds;
+		if (EC && EC->GetPhase() == EExamPhase::Ready)
+		{
+			const bool bHandbrakeHeld = Car && Car->IsHandbrakeEngaged();
+			const bool bOk = bHandbrakeHeld;
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step19_prep_to_ready %s (WaitTime=%.2fs, Handbrake=%d)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), InputChainJourneyTimer, bHandbrakeHeld ? 1 : 0);
+			InputChainStep = 20;
+			InputChainSubStep = 0;
+			InputChainJourneyTimer = 0.f;
+		}
+		else if (InputChainJourneyTimer > 3.0f)
+		{
+			InputChainFailures++;
+			UE_LOG(LogTemp, Error, TEXT("[KeMuSanInputChain] step19_prep_to_ready FAIL (Timeout, Phase=%d)"),
+				EC ? static_cast<int32>(EC->GetPhase()) : -1);
+			InputChainStep = 20;
+			InputChainSubStep = 0;
+			InputChainJourneyTimer = 0.f;
+		}
+		break;
+
+	case 20: // Step 20: Q 键左转向灯并等待 >= 3.0 秒（起步前打灯满3秒国标）
+		if (InputChainSubStep == 0)
+		{
+			if (Car && Car->IsLeftSignalOn())
+			{
+				InputChainSubStep = 2;
+				InputChainJourneyTimer = 0.f;
+			}
+			else
+			{
+				InputKey(FInputKeyParams(EKeys::Q, IE_Pressed, 1.0));
+				InputChainSubStep = 1;
+			}
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::Q, IE_Released, 0.0));
+			InputChainSubStep = 2;
+			InputChainJourneyTimer = 0.f;
+		}
+		else
+		{
+			InputChainJourneyTimer += DeltaSeconds;
+			if (InputChainJourneyTimer >= 3.1f)
+			{
+				const bool bSignalOn = Car && Car->IsLeftSignalOn();
+				if (!bSignalOn) { InputChainFailures++; }
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step20_q_signal_wait3s %s (SignalTime=%.2fs, LeftSignal=%d)"),
+					bSignalOn ? TEXT("PASS") : TEXT("FAIL"), InputChainJourneyTimer, bSignalOn ? 1 : 0);
+				InputChainStep = 21;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+		}
+		break;
+
+	case 21: // Step 21: 按 1 挂入 1 挡，按 SpaceBar 松开手刹
+		if (InputChainSubStep == 0)
+		{
+			InputKey(FInputKeyParams(EKeys::One, IE_Pressed, 1.0));
+			InputChainSubStep = 1;
+		}
+		else if (InputChainSubStep == 1)
+		{
+			InputKey(FInputKeyParams(EKeys::One, IE_Released, 0.0));
+			InputChainSubStep = 2;
+		}
+		else if (InputChainSubStep == 2)
+		{
+			InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Pressed, 1.0));
+			InputChainSubStep = 3;
+		}
+		else if (InputChainSubStep == 3)
+		{
+			InputKey(FInputKeyParams(EKeys::SpaceBar, IE_Released, 0.0));
+			InputChainSubStep = 4;
+		}
+		else
+		{
+			const bool bGearOk = Car && (Car->GetGear() == EGear::G1);
+			const bool bHandbrakeReleased = Car && !Car->IsHandbrakeEngaged();
+			const bool bOk = bGearOk && bHandbrakeReleased;
+			if (!bOk) { InputChainFailures++; }
+			if (Car)
+			{
+				InputChainStartLocation = Car->GetActorLocation();
+			}
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step21_gear1_release_handbrake %s (Gear=%d, Handbrake=%d)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), Car ? static_cast<int32>(Car->GetGear()) : -1, bHandbrakeReleased ? 0 : 1);
+			InputChainStep = 22;
+			InputChainSubStep = 0;
+			InputChainJourneyTimer = 0.f;
+		}
+		break;
+
+	case 22: // Step 22: 持续输入 W（真实油门），平滑起步不熄火，进入 Driving 阶段并沿路线位移 >= 14 米
+		InputChainJourneyTimer += DeltaSeconds;
+		InputKey(FInputKeyParams(EKeys::W, IE_Pressed, 1.0));
+		{
+			const float DistMoved = Car ? (FVector::Dist(Car->GetActorLocation(), InputChainStartLocation) * 0.01f) : 0.f;
+			const float CurS = EC ? EC->GetCurS() : 0.f;
+			const float CurSpeedKmh = Car ? Car->GetSpeedKmh() : 0.f;
+			const bool bIsRealDriving = EC && (EC->GetPhase() == EExamPhase::Driving);
+			const bool bNotStalled = Car && (!Car->IsStalled());
+
+			// 严格判定：真实进入 Driving 阶段、路线里程 S > 34m、位移 >= 14m、速度 > 5km/h 且未熄火
+			if (DistMoved >= 14.0f && CurS > 34.0f && bIsRealDriving && (CurSpeedKmh > 5.0f) && bNotStalled)
+			{
+				InputKey(FInputKeyParams(EKeys::W, IE_Released, 0.0));
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step22_w_driving_distance PASS (Dist=%.1fm, CurS=%.1f, Speed=%.1fkm/h, Driving=1, NotStalled=1, Time=%.2fs)"),
+					DistMoved, CurS, CurSpeedKmh, InputChainJourneyTimer);
+				InputChainStep = 23;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+			else if (InputChainJourneyTimer > 12.0f)
+			{
+				InputKey(FInputKeyParams(EKeys::W, IE_Released, 0.0));
+				InputChainFailures++;
+				UE_LOG(LogTemp, Error, TEXT("[KeMuSanInputChain] step22_w_driving_distance FAIL (Timeout, Dist=%.1fm, CurS=%.1f, Speed=%.1fkm/h, Phase=%d, Stalled=%d)"),
+					DistMoved, CurS, CurSpeedKmh, EC ? static_cast<int32>(EC->GetPhase()) : -1, Car ? (Car->IsStalled() ? 1 : 0) : -1);
+				InputChainStep = 23;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+		}
+		break;
+
+	case 23: // Step 23: S 键刹车停住（速度降至 < 0.5km/h 刹停）
+		InputChainJourneyTimer += DeltaSeconds;
+		InputKey(FInputKeyParams(EKeys::S, IE_Pressed, 1.0));
+		{
+			const float CurSpeedKmh = Car ? Car->GetSpeedKmh() : 0.f;
+			if (CurSpeedKmh < 0.5f)
+			{
+				InputKey(FInputKeyParams(EKeys::S, IE_Released, 0.0));
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step23_s_brake_stop PASS (FinalSpeed=%.2fkm/h, StopTime=%.2fs)"),
+					CurSpeedKmh, InputChainJourneyTimer);
+				InputChainStep = 24;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+			else if (InputChainJourneyTimer > 6.0f)
+			{
+				InputKey(FInputKeyParams(EKeys::S, IE_Released, 0.0));
+				InputChainFailures++;
+				UE_LOG(LogTemp, Error, TEXT("[KeMuSanInputChain] step23_s_brake_stop FAIL (Timeout, FinalSpeed=%.2fkm/h)"), CurSpeedKmh);
+				InputChainStep = 24;
+				InputChainSubStep = 0;
+				InputChainJourneyTimer = 0.f;
+			}
+		}
+		break;
+
+	case 24: // Step 24: 练习模式设计契约一致性核验（验证处于练习模式且游戏已启动）
+		{
+			const bool bPracticeOk = EC && EC->IsPractice();
+			const bool bGameStarted = GM && GM->IsGameStarted();
+			const bool bOk = bPracticeOk && bGameStarted;
+			if (!bOk) { InputChainFailures++; }
+			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] step24_practice_mode_consistency %s (IsPractice=%d, GameStarted=%d)"),
+				bOk ? TEXT("PASS") : TEXT("FAIL"), bPracticeOk ? 1 : 0, bGameStarted ? 1 : 0);
+			InputChainStep = 25;
+			InputChainSubStep = 0;
+		}
+		break;
+
+	case 25: // Step 25: 汇总结果与判定
 		if (InputChainFailures == 0)
 		{
 			UE_LOG(LogTemp, Log, TEXT("[KeMuSanInputChain] test_complete PASS"));
@@ -695,9 +957,74 @@ void AKeMuSanPlayerController::TickInputChainTest(float DeltaSeconds)
 			UE_LOG(LogTemp, Error, TEXT("[KeMuSanInputChain] test_complete FAIL (Failures=%d)"), InputChainFailures);
 		}
 		bInputChainTesting = false;
-		InputChainStep = 17;
+		InputChainStep = 26;
 		if (FParse::Param(FCommandLine::Get(), TEXT("test-input-chain-exit")))
 		{
+			FGenericPlatformMisc::RequestExit(false);
+		}
+		break;
+
+	default:
+		break;
+	}
+}
+
+void AKeMuSanPlayerController::TickExamStartTest(float DeltaSeconds)
+{
+	ExamStartTimer += DeltaSeconds;
+	AExamController* EC = GetExamController();
+	AKeMuSanPawn* Car = GetTrainingPawn();
+
+	switch (ExamStartStep)
+	{
+	case 0: // Step 0: 等待游戏初始稳定（0.3s），然后真实按下 F1 或 F2
+		if (ExamStartTimer >= 0.3f)
+		{
+			const FKey TargetKey = (ExamStartTarget == TEXT("auto")) ? EKeys::F2 : EKeys::F1;
+			InputKey(FInputKeyParams(TargetKey, IE_Pressed, 1.0));
+			ExamStartStep = 1;
+			ExamStartTimer = 0.f;
+		}
+		break;
+
+	case 1: // Step 1: 下一帧释放按键
+		{
+			const FKey TargetKey = (ExamStartTarget == TEXT("auto")) ? EKeys::F2 : EKeys::F1;
+			InputKey(FInputKeyParams(TargetKey, IE_Released, 0.0));
+			ExamStartStep = 2;
+			ExamStartTimer = 0.f;
+		}
+		break;
+
+	case 2: // Step 2: 等待 0.3s 让控制器完成初始化并执行断言
+		if (ExamStartTimer >= 0.3f)
+		{
+			AKeMuSanGameMode* GM = Cast<AKeMuSanGameMode>(GetWorld()->GetAuthGameMode());
+			const bool bGMStarted = GM && GM->IsGameStarted() && GM->bExamMode;
+			const bool bNotPractice = EC && (!EC->IsPractice());
+			const bool bSimulatedExam = EC && (EC->GetPlayMode() == EGamePlayMode::SimulatedExam);
+			const bool bPrepPhase = EC && (EC->GetPhase() == EExamPhase::Prep);
+			const bool bECTransMatch = EC && (ExamStartTarget == TEXT("auto") ? (EC->GetTransmission() == ETransmissionType::Auto) : (EC->GetTransmission() == ETransmissionType::Manual));
+			const bool bPawnTransMatch = Car && (ExamStartTarget == TEXT("auto") ? (Car->GetTransmissionType() == ETransmissionType::Auto) : (Car->GetTransmissionType() == ETransmissionType::Manual));
+			const bool bNoAutoSeatbelt = Car && (!Car->IsSeatbeltOn());
+			const bool bHandbrakeEngaged = Car && Car->IsHandbrakeEngaged();
+			const bool bPrepNotDrivable = Car && (!Car->IsDrivable());
+
+			const bool bAllOk = bGMStarted && bNotPractice && bSimulatedExam && bPrepPhase && bECTransMatch && bPawnTransMatch && bNoAutoSeatbelt && bHandbrakeEngaged && bPrepNotDrivable;
+
+			if (bAllOk)
+			{
+				UE_LOG(LogTemp, Log, TEXT("[KeMuSanExamStart] %s PASS (GMStarted=%d, NotPractice=%d, SimExam=%d, PrepPhase=%d, ECTrans=%d, PawnTrans=%d, NoSeatbelt=%d, Handbrake=%d, NotDrivable=%d)"),
+					*ExamStartTarget, bGMStarted ? 1 : 0, bNotPractice ? 1 : 0, bSimulatedExam ? 1 : 0, bPrepPhase ? 1 : 0, bECTransMatch ? 1 : 0, bPawnTransMatch ? 1 : 0, bNoAutoSeatbelt ? 1 : 0, bHandbrakeEngaged ? 1 : 0, bPrepNotDrivable ? 1 : 0);
+			}
+			else
+			{
+				UE_LOG(LogTemp, Error, TEXT("[KeMuSanExamStart] %s FAIL (GMStarted=%d, NotPractice=%d, SimExam=%d, PrepPhase=%d, ECTrans=%d, PawnTrans=%d, NoSeatbelt=%d, Handbrake=%d, NotDrivable=%d)"),
+					*ExamStartTarget, bGMStarted ? 1 : 0, bNotPractice ? 1 : 0, bSimulatedExam ? 1 : 0, bPrepPhase ? 1 : 0, bECTransMatch ? 1 : 0, bPawnTransMatch ? 1 : 0, bNoAutoSeatbelt ? 1 : 0, bHandbrakeEngaged ? 1 : 0, bPrepNotDrivable ? 1 : 0);
+			}
+
+			bExamStartTesting = false;
+			ExamStartStep = 3;
 			FGenericPlatformMisc::RequestExit(false);
 		}
 		break;

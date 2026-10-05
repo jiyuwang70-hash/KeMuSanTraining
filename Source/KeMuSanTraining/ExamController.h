@@ -68,6 +68,8 @@ public:
 	// 游戏模式（引导练习 vs 模拟考试）
 	void SetPlayMode(EGamePlayMode InMode);
 	EGamePlayMode GetPlayMode() const { return PlayMode; }
+	float GetCurS() const { return CurS; }
+	ETransmissionType GetTransmission() const { return Transmission; }
 
 protected:
 	// ---- 模式与阶段 ----

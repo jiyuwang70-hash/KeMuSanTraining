@@ -5,6 +5,11 @@
 #include "Components/StaticMeshComponent.h"
 #include "Engine/TextureRenderTarget2D.h"
 #include "GameFramework/SpringArmComponent.h"
+#include "Components/WidgetComponent.h"
+#include "Widgets/Text/STextBlock.h"
+#include "Widgets/Layout/SBorder.h"
+#include "Widgets/Layout/SBox.h"
+#include "Styling/CoreStyle.h"
 #include "Materials/MaterialInstanceDynamic.h"
 #include "UObject/ConstructorHelpers.h"
 
@@ -107,25 +112,58 @@ AKeMuSanPawn::AKeMuSanPawn()
 	MakePart(TEXT("FrontHeader"), CubeMesh, FVector(84.f, 0.f, 182.f), FVector(0.14f, 1.66f, 0.10f), FRotator::ZeroRotator, ColorBody);
 	MakePart(TEXT("RearHeader"), CubeMesh, FVector(-124.f, 0.f, 182.f), FVector(0.16f, 1.66f, 0.10f), FRotator::ZeroRotator, ColorBody);
 
-	// A 柱（前挡风玻璃立柱，车身同色珍珠白，左右两侧斜向支撑车顶，第一人称盲区小且完全不遮挡正前方与后视镜）
-	MakePart(TEXT("PillarFL"), CubeMesh, FVector(68.f, -88.f, 138.f), FVector(0.14f, 0.06f, 0.86f), FRotator(-10.f, 0.f, 0.f), ColorBody);
-	MakePart(TEXT("PillarFR"), CubeMesh, FVector(68.f, 88.f, 138.f), FVector(0.14f, 0.06f, 0.86f), FRotator(-10.f, 0.f, 0.f), ColorBody);
+	// A 柱（前挡风玻璃立柱，车身同色珍珠白，左右两侧斜向支撑车顶，更具流线型）
+	MakePart(TEXT("PillarFL"), CubeMesh, FVector(68.f, -88.f, 138.f), FVector(0.14f, 0.06f, 0.86f), FRotator(-18.f, 0.f, 0.f), ColorBody);
+	MakePart(TEXT("PillarFR"), CubeMesh, FVector(68.f, 88.f, 138.f), FVector(0.14f, 0.06f, 0.86f), FRotator(-18.f, 0.f, 0.f), ColorBody);
 
 	// B 柱（门中柱，汽车标配黑色立柱，位于驾驶员正左/正右侧方）
 	MakePart(TEXT("PillarML"), CubeMesh, FVector(-25.f, -87.f, 138.f), FVector(0.12f, 0.05f, 0.86f), FRotator::ZeroRotator, ColorTrim);
 	MakePart(TEXT("PillarMR"), CubeMesh, FVector(-25.f, 87.f, 138.f), FVector(0.12f, 0.05f, 0.86f), FRotator::ZeroRotator, ColorTrim);
 
-	// C 柱（后挡风玻璃立柱，左右两侧敦实宽厚的珍珠白钣金，斜向无缝连接后备箱与车顶，轿车溜背造型浑然天成）
-	MakePart(TEXT("PillarRL"), CubeMesh, FVector(-120.f, -84.f, 138.f), FVector(0.38f, 0.10f, 0.86f), FRotator(12.f, 0.f, 0.f), ColorBody);
-	MakePart(TEXT("PillarRR"), CubeMesh, FVector(-120.f, 84.f, 138.f), FVector(0.38f, 0.10f, 0.86f), FRotator(12.f, 0.f, 0.f), ColorBody);
+	// C 柱（后挡风玻璃立柱，左右两侧珍珠白钣金，斜向无缝连接后备箱与车顶，溜背造型自然）
+	MakePart(TEXT("PillarRL"), CubeMesh, FVector(-120.f, -84.f, 138.f), FVector(0.38f, 0.10f, 0.86f), FRotator(18.f, 0.f, 0.f), ColorBody);
+	MakePart(TEXT("PillarRR"), CubeMesh, FVector(-120.f, 84.f, 138.f), FVector(0.38f, 0.10f, 0.86f), FRotator(18.f, 0.f, 0.f), ColorBody);
 
 	// 后风挡深色车窗玻璃外饰（位于左右 C 柱内侧，形成写实的深色玻璃窗框，中间留出 90cm 宽后视通廊，车内后视镜 100% 通透）
-	MakePart(TEXT("RearGlassL"), CubeMesh, FVector(-121.f, -55.f, 138.f), FVector(0.08f, 0.35f, 0.84f), FRotator(12.f, 0.f, 0.f), ColorGlass);
-	MakePart(TEXT("RearGlassR"), CubeMesh, FVector(-121.f, 55.f, 138.f), FVector(0.08f, 0.35f, 0.84f), FRotator(12.f, 0.f, 0.f), ColorGlass);
+	MakePart(TEXT("RearGlassL"), CubeMesh, FVector(-121.f, -55.f, 138.f), FVector(0.08f, 0.35f, 0.84f), FRotator(18.f, 0.f, 0.f), ColorGlass);
+	MakePart(TEXT("RearGlassR"), CubeMesh, FVector(-121.f, 55.f, 138.f), FVector(0.08f, 0.35f, 0.84f), FRotator(18.f, 0.f, 0.f), ColorGlass);
 
-	// 车顶驾校标配“教练车”顶灯（明黄灯箱 + 黑色底座，最具辨识度的灵魂细节）
+	// 前后保险杠与侧裙底梁（哑光黑色防擦工程塑料造型，强化整车真实比例）
+	MakePart(TEXT("FrontBumper"), CubeMesh, FVector(212.f, 0.f, 44.f), FVector(0.16f, 1.84f, 0.28f), FRotator::ZeroRotator, ColorTrim);
+	MakePart(TEXT("RearBumper"), CubeMesh, FVector(-212.f, 0.f, 44.f), FVector(0.16f, 1.84f, 0.28f), FRotator::ZeroRotator, ColorTrim);
+	MakePart(TEXT("SideSkirtL"), CubeMesh, FVector(0.f, -89.f, 26.f), FVector(3.2f, 0.06f, 0.14f), FRotator::ZeroRotator, ColorTrim);
+	MakePart(TEXT("SideSkirtR"), CubeMesh, FVector(0.f, 89.f, 26.f), FVector(3.2f, 0.06f, 0.14f), FRotator::ZeroRotator, ColorTrim);
+
+	// 主驾与副驾舒适座椅（坐垫 + 后仰靠背 + 头枕，深色织物材质，座舱立体感与后视镜真实度跃升）
+	const FLinearColor ColorSeat(0.10f, 0.11f, 0.14f);
+	MakePart(TEXT("SeatBaseL"), CubeMesh, FVector(-15.f, -42.f, 66.f), FVector(0.48f, 0.44f, 0.16f), FRotator::ZeroRotator, ColorSeat);
+	MakePart(TEXT("SeatBackL"), CubeMesh, FVector(-38.f, -42.f, 102.f), FVector(0.12f, 0.42f, 0.60f), FRotator(12.f, 0.f, 0.f), ColorSeat);
+	MakePart(TEXT("SeatHeadL"), CubeMesh, FVector(-45.f, -42.f, 136.f), FVector(0.10f, 0.22f, 0.16f), FRotator(12.f, 0.f, 0.f), ColorSeat);
+
+	MakePart(TEXT("SeatBaseR"), CubeMesh, FVector(-15.f, 42.f, 66.f), FVector(0.48f, 0.44f, 0.16f), FRotator::ZeroRotator, ColorSeat);
+	MakePart(TEXT("SeatBackR"), CubeMesh, FVector(-38.f, 42.f, 102.f), FVector(0.12f, 0.42f, 0.60f), FRotator(12.f, 0.f, 0.f), ColorSeat);
+	MakePart(TEXT("SeatHeadR"), CubeMesh, FVector(-45.f, 42.f, 136.f), FVector(0.10f, 0.22f, 0.16f), FRotator(12.f, 0.f, 0.f), ColorSeat);
+
+	// 车顶驾校标配“教练车”顶灯（明黄灯箱 + 黑色底座 + 前后双面 UWidgetComponent 实打实渲染“教练”汉字）
 	MakePart(TEXT("RoofSignBase"), CubeMesh, FVector(-20.f, 0.f, 189.5f), FVector(0.44f, 0.90f, 0.04f), FRotator::ZeroRotator, ColorTrim);
 	MakePart(TEXT("RoofSign"), CubeMesh, FVector(-20.f, 0.f, 193.5f), FVector(0.40f, 0.85f, 0.08f), FRotator::ZeroRotator, FLinearColor(0.96f, 0.82f, 0.18f));
+
+	auto CreateSignWidget = [&](const TCHAR* CompName, const FVector& Loc, const FRotator& Rot) -> UWidgetComponent*
+	{
+		UWidgetComponent* WC = CreateDefaultSubobject<UWidgetComponent>(CompName);
+		WC->SetupAttachment(Root);
+		WC->SetRelativeLocation(Loc);
+		WC->SetRelativeRotation(Rot);
+		WC->SetDrawSize(FVector2D(640.f, 64.f));
+		WC->SetRelativeScale3D(FVector(0.125f, 0.125f, 0.125f)); // 640x64 * 0.125 = 80x8cm，精确贴合车顶标牌灯箱
+		WC->SetWidgetSpace(EWidgetSpace::World);
+		WC->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		return WC;
+	};
+	// 正面朝车头 (+X，紧贴灯箱前端面 X=0cm)
+	RoofSignWidgetF = CreateSignWidget(TEXT("RoofSignWidgetF"), FVector(0.5f, 0.f, 193.5f), FRotator(0.f, 0.f, 0.f));
+	// 背面朝车尾 (-X，紧贴灯箱后端面 X=-40cm)
+	RoofSignWidgetR = CreateSignWidget(TEXT("RoofSignWidgetR"), FVector(-40.5f, 0.f, 193.5f), FRotator(0.f, 180.f, 0.f));
 
 	// 仪表台（前挡风玻璃下方）
 	Dashboard = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("Dashboard"));
@@ -138,26 +176,76 @@ AKeMuSanPawn::AKeMuSanPawn()
 	DashDyn->SetVectorParameterValue(FName("Color"), FLinearColor(0.06f, 0.07f, 0.08f));
 	Dashboard->SetMaterial(0, DashDyn);
 
-	// 方向盘（主驾驶位前方，微仰角）
+	// 方向盘（主驾驶位前方，保留该组件作为旋转根节点但无实心Mesh，Scale=1:1:1，Pitch约-35°使局部YZ轮面法线正对主驾眼睛）
 	SteeringWheel = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SteeringWheel"));
-	SteeringWheel->SetStaticMesh(CylMesh);
 	SteeringWheel->SetRelativeLocation(FVector(20.f, -42.f, 114.f));
-	SteeringWheel->SetRelativeRotation(FRotator(-25.f, 0.f, 0.f));
-	SteeringWheel->SetRelativeScale3D(FVector(0.38f, 0.38f, 0.05f));
+	SteeringWheel->SetRelativeRotation(FRotator(-35.f, 0.f, 0.f));
+	SteeringWheel->SetRelativeScale3D(FVector(1.0f, 1.0f, 1.0f));
 	SteeringWheel->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SteeringWheel->SetupAttachment(Root);
-	UMaterialInstanceDynamic* SteerDyn = UMaterialInstanceDynamic::Create(BaseMat, this);
-	SteerDyn->SetVectorParameterValue(FName("Color"), FLinearColor(0.04f, 0.04f, 0.05f));
-	SteeringWheel->SetMaterial(0, SteerDyn);
 
-	// 车轮（圆柱绕 Y 轴横卧，Roll=90°，外径约68cm，宽24cm）
+	// 16段沿半径18cm切向小立方体构成的真正空心中空外环（绝非实心圆盘）
+	const float RimRadius = 18.f;
+	const float SegLen = 2.f * PI * RimRadius / 16.f * 1.06f; // 约 7.5cm
+	const FLinearColor ColorSteerRim(0.06f, 0.06f, 0.07f);
+	for (int32 i = 0; i < 16; ++i)
+	{
+		const float AngleDeg = i * (360.f / 16.f);
+		const float AngleRad = FMath::DegreesToRadians(AngleDeg);
+		const float SegY = RimRadius * FMath::Cos(AngleRad);
+		const float SegZ = RimRadius * FMath::Sin(AngleRad);
+		const FRotator SegRot(0.f, 0.f, -(AngleDeg + 90.f));
+
+		UStaticMeshComponent* Seg = CreateDefaultSubobject<UStaticMeshComponent>(*FString::Printf(TEXT("SteerRim_%d"), i));
+		Seg->SetStaticMesh(CubeMesh);
+		Seg->SetRelativeLocation(FVector(0.f, SegY, SegZ));
+		Seg->SetRelativeRotation(SegRot);
+		Seg->SetRelativeScale3D(FVector(0.035f, SegLen * 0.01f, 0.035f));
+		Seg->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Seg->SetupAttachment(SteeringWheel);
+		UMaterialInstanceDynamic* SegDyn = UMaterialInstanceDynamic::Create(BaseMat, this);
+		SegDyn->SetVectorParameterValue(FName("Color"), ColorSteerRim);
+		Seg->SetMaterial(0, SegDyn);
+	}
+
+	// 方向盘中心轮毂（小圆柱，Pitch 90°使圆柱轴沿轮面法线局部X，厚度薄约3cm，直径约12cm）
+	UStaticMeshComponent* SteerHub = CreateDefaultSubobject<UStaticMeshComponent>(TEXT("SteerHub"));
+	SteerHub->SetStaticMesh(CylMesh);
+	SteerHub->SetRelativeLocation(FVector(0.f, 0.f, 0.f));
+	SteerHub->SetRelativeRotation(FRotator(90.f, 0.f, 0.f));
+	SteerHub->SetRelativeScale3D(FVector(0.12f, 0.12f, 0.03f));
+	SteerHub->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+	SteerHub->SetupAttachment(SteeringWheel);
+	UMaterialInstanceDynamic* HubDyn = UMaterialInstanceDynamic::Create(BaseMat, this);
+	HubDyn->SetVectorParameterValue(FName("Color"), FLinearColor(0.08f, 0.09f, 0.11f));
+	SteerHub->SetMaterial(0, HubDyn);
+
+	// 三幅辐条（左/右/底三根，连接中心轮毂与外环，中间完全镂空，仪表盘清晰可见）
+	const FLinearColor ColorSpoke(0.16f, 0.18f, 0.22f);
+	auto MakeSpoke = [&](const TCHAR* SpokeName, const FVector& Loc, const FVector& Scale)
+	{
+		UStaticMeshComponent* Sp = CreateDefaultSubobject<UStaticMeshComponent>(SpokeName);
+		Sp->SetStaticMesh(CubeMesh);
+		Sp->SetRelativeLocation(Loc);
+		Sp->SetRelativeScale3D(Scale);
+		Sp->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Sp->SetupAttachment(SteeringWheel);
+		UMaterialInstanceDynamic* SpDyn = UMaterialInstanceDynamic::Create(BaseMat, this);
+		SpDyn->SetVectorParameterValue(FName("Color"), ColorSpoke);
+		Sp->SetMaterial(0, SpDyn);
+	};
+	MakeSpoke(TEXT("SpokeL"), FVector(0.f, -9.5f, 0.f), FVector(0.025f, 0.12f, 0.03f));
+	MakeSpoke(TEXT("SpokeR"), FVector(0.f, 9.5f, 0.f), FVector(0.025f, 0.12f, 0.03f));
+	MakeSpoke(TEXT("SpokeB"), FVector(0.f, 0.f, -9.5f), FVector(0.025f, 0.03f, 0.12f));
+
+	// 车轮（圆柱绕 X 轴横卧 Roll=90°，局部 XY 为横截面正圆半径 0.68f，Z 为轮宽轴向 0.24f，杜绝径向压扁）
 	auto MakeWheel = [&](const TCHAR* Name, const FVector& Loc) -> UStaticMeshComponent*
 	{
 		UStaticMeshComponent* W = CreateDefaultSubobject<UStaticMeshComponent>(Name);
 		W->SetStaticMesh(CylMesh);
 		W->SetRelativeLocation(Loc);
 		W->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
-		W->SetRelativeScale3D(FVector(0.68f, 0.24f, 0.68f));
+		W->SetRelativeScale3D(FVector(0.68f, 0.68f, 0.24f));
 		W->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 		W->SetupAttachment(Root);
 		UMaterialInstanceDynamic* D = UMaterialInstanceDynamic::Create(BaseMat, this);
@@ -169,6 +257,27 @@ AKeMuSanPawn::AKeMuSanPawn()
 	WheelFR = MakeWheel(TEXT("WheelFR"), FVector(135.f, 82.f, 34.f));
 	WheelRL = MakeWheel(TEXT("WheelRL"), FVector(-135.f, -82.f, 34.f));
 	WheelRR = MakeWheel(TEXT("WheelRR"), FVector(-135.f, 82.f, 34.f));
+
+	// 独立金属轮毂盖（直接附加到 Root，避免父组件非均匀缩放污染，精确定位在轮胎外侧 Y=±94.3cm，正圆形，厚4cm）
+	const FLinearColor ColorRim(0.72f, 0.74f, 0.78f);
+	auto MakeRim = [&](const TCHAR* Name, const FVector& Loc) -> UStaticMeshComponent*
+	{
+		UStaticMeshComponent* Rim = CreateDefaultSubobject<UStaticMeshComponent>(Name);
+		Rim->SetStaticMesh(CylMesh);
+		Rim->SetRelativeLocation(Loc);
+		Rim->SetRelativeRotation(FRotator(0.f, 0.f, 90.f));
+		Rim->SetRelativeScale3D(FVector(0.46f, 0.46f, 0.04f));
+		Rim->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+		Rim->SetupAttachment(Root);
+		UMaterialInstanceDynamic* RimDyn = UMaterialInstanceDynamic::Create(BaseMat, this);
+		RimDyn->SetVectorParameterValue(FName("Color"), ColorRim);
+		Rim->SetMaterial(0, RimDyn);
+		return Rim;
+	};
+	RimFL = MakeRim(TEXT("RimFL"), FVector(135.f, -94.3f, 34.f));
+	RimFR = MakeRim(TEXT("RimFR"), FVector(135.f, 94.3f, 34.f));
+	RimRL = MakeRim(TEXT("RimRL"), FVector(-135.f, -94.3f, 34.f));
+	RimRR = MakeRim(TEXT("RimRR"), FVector(-135.f, 94.3f, 34.f));
 
 	// 前照灯（左舵：左侧 -Y，右侧 +Y）
 	LightMatL = MakeMesh(TEXT("LightFL"), CubeMesh, FVector(211.f, -62.f, 72.f), FVector(0.30f, 0.24f, 0.16f), FLinearColor(0.08f, 0.08f, 0.07f), LightFL);
@@ -182,7 +291,7 @@ AKeMuSanPawn::AKeMuSanPawn()
 	SigMatL = MakeMesh(TEXT("SigL"), CubeMesh, FVector(-211.f, -92.f, 72.f), FVector(0.26f, 0.14f, 0.12f), FLinearColor(0.16f, 0.12f, 0.03f), SigL);
 	SigMatR = MakeMesh(TEXT("SigR"), CubeMesh, FVector(-211.f, 92.f, 72.f), FVector(0.26f, 0.14f, 0.12f), FLinearColor(0.16f, 0.12f, 0.03f), SigR);
 
-	// 追尾摄像机
+	// 追尾摄像机（bInheritYaw 设为 true，转弯时严密跟车追尾，杜绝90°/180°弯道视角失跟）
 	SpringArm = CreateDefaultSubobject<USpringArmComponent>(TEXT("SpringArm"));
 	SpringArm->SetupAttachment(Root);
 	SpringArm->TargetArmLength = 680.f;
@@ -190,7 +299,7 @@ AKeMuSanPawn::AKeMuSanPawn()
 	SpringArm->SetRelativeRotation(FRotator(-11.f, 0.f, 0.f));
 	SpringArm->bDoCollisionTest = false;
 	SpringArm->bInheritPitch = false;
-	SpringArm->bInheritYaw = false;
+	SpringArm->bInheritYaw = true;
 	SpringArm->bInheritRoll = false;
 	SpringArm->bEnableCameraLag = true;
 	SpringArm->CameraLagSpeed = 8.f;
@@ -199,22 +308,22 @@ AKeMuSanPawn::AKeMuSanPawn()
 	Camera->SetupAttachment(SpringArm);
 	Camera->FieldOfView = 95.f;
 
-	// 第一人称座舱摄像机（主驾视点，左舵 y = -42cm）
+	// 第一人称座舱摄像机（主驾视点，左舵 y = -42cm，后移至-50cm高148cm下倾5°使方向盘中空轮毂/辐条清晰入镜）
 	CockpitCamera = CreateDefaultSubobject<UCameraComponent>(TEXT("CockpitCamera"));
 	CockpitCamera->SetupAttachment(Root);
-	CockpitCamera->SetRelativeLocation(FVector(-15.f, -42.f, 138.f));
-	CockpitCamera->SetRelativeRotation(FRotator(0.f, 0.f, 0.f));
+	CockpitCamera->SetRelativeLocation(FVector(-50.f, -42.f, 148.f));
+	CockpitCamera->SetRelativeRotation(FRotator(-5.f, 0.f, 0.f));
 	CockpitCamera->FieldOfView = 85.f;
 	CockpitCamera->bAutoActivate = false;
 
-	// 真实光学后视镜捕获组件（左镜 -Y，右镜 +Y）
+	// 真实光学后视镜捕获组件（左镜外展 Yaw 196°，右镜外展 Yaw 164°，中央镜居中透过后风挡 FOV 35°）
 	LeftMirrorCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("LeftMirrorCapture"));
 	LeftMirrorCapture->SetupAttachment(Root);
 	LeftMirrorCapture->SetRelativeLocation(FVector(70.f, -105.f, 108.f));
-	LeftMirrorCapture->SetRelativeRotation(FRotator(-2.f, 172.f, 0.f));
+	LeftMirrorCapture->SetRelativeRotation(FRotator(-2.f, 196.f, 0.f));
 	LeftMirrorCapture->FOVAngle = 55.f;
 	LeftMirrorCapture->CaptureSource = SCS_FinalColorLDR;
-	LeftMirrorCapture->bCaptureEveryFrame = true;
+	LeftMirrorCapture->bCaptureEveryFrame = false;
 	LeftMirrorCapture->bCaptureOnMovement = false;
 	LeftMirrorCapture->bOverride_CustomNearClippingPlane = true;
 	LeftMirrorCapture->CustomNearClippingPlane = 10.0f;
@@ -222,10 +331,10 @@ AKeMuSanPawn::AKeMuSanPawn()
 	RightMirrorCapture = CreateDefaultSubobject<USceneCaptureComponent2D>(TEXT("RightMirrorCapture"));
 	RightMirrorCapture->SetupAttachment(Root);
 	RightMirrorCapture->SetRelativeLocation(FVector(70.f, 105.f, 108.f));
-	RightMirrorCapture->SetRelativeRotation(FRotator(-4.f, -172.f, 0.f));
+	RightMirrorCapture->SetRelativeRotation(FRotator(-3.f, 164.f, 0.f));
 	RightMirrorCapture->FOVAngle = 55.f;
 	RightMirrorCapture->CaptureSource = SCS_FinalColorLDR;
-	RightMirrorCapture->bCaptureEveryFrame = true;
+	RightMirrorCapture->bCaptureEveryFrame = false;
 	RightMirrorCapture->bCaptureOnMovement = false;
 	RightMirrorCapture->bOverride_CustomNearClippingPlane = true;
 	RightMirrorCapture->CustomNearClippingPlane = 10.0f;
@@ -234,9 +343,9 @@ AKeMuSanPawn::AKeMuSanPawn()
 	InteriorMirrorCapture->SetupAttachment(Root);
 	InteriorMirrorCapture->SetRelativeLocation(FVector(35.f, 0.0f, 148.f));
 	InteriorMirrorCapture->SetRelativeRotation(FRotator(-1.f, 180.f, 0.f));
-	InteriorMirrorCapture->FOVAngle = 65.f;
+	InteriorMirrorCapture->FOVAngle = 35.f;
 	InteriorMirrorCapture->CaptureSource = SCS_FinalColorLDR;
-	InteriorMirrorCapture->bCaptureEveryFrame = true;
+	InteriorMirrorCapture->bCaptureEveryFrame = false;
 	InteriorMirrorCapture->bCaptureOnMovement = false;
 	InteriorMirrorCapture->bOverride_CustomNearClippingPlane = true;
 	InteriorMirrorCapture->CustomNearClippingPlane = 10.0f;
@@ -307,8 +416,43 @@ void AKeMuSanPawn::BeginPlay()
 		InteriorMirrorCapture->TextureTarget = InteriorMirrorTarget;
 	}
 
+	// 初始化车顶教练车标牌实际“教 练”汉字（通过 UWidgetComponent 在世界空间真正渲染，640x64配合0.125缩放）
+	auto InitSignSlate = [](UWidgetComponent* WC)
+	{
+		if (!WC) return;
+		FSlateFontInfo FontInfo = FCoreStyle::Get().GetFontStyle("NormalFont");
+		FontInfo.Size = 48;
+
+		TSharedRef<SWidget> SignWidget = SNew(SBox)
+			.WidthOverride(640.f)
+			.HeightOverride(64.f)
+			[
+				SNew(SBorder)
+				.BorderBackgroundColor(FLinearColor(0.96f, 0.82f, 0.18f, 0.0f))
+				.HAlign(HAlign_Center)
+				.VAlign(VAlign_Center)
+				[
+					SNew(STextBlock)
+					.Text(FText::FromString(TEXT("教练")))
+					.Font(FontInfo)
+					.ColorAndOpacity(FSlateColor(FLinearColor(0.85f, 0.08f, 0.08f, 1.0f)))
+				]
+			];
+		WC->SetSlateWidget(SignWidget);
+	};
+	InitSignSlate(RoofSignWidgetF);
+	InitSignSlate(RoofSignWidgetR);
+
 	ResetAllMirrorsToStandard();
 	UpdateMirrorOptics();
+	CaptureAllMirrorsImmediate();
+}
+
+void AKeMuSanPawn::CaptureAllMirrorsImmediate()
+{
+	if (LeftMirrorCapture) LeftMirrorCapture->CaptureScene();
+	if (InteriorMirrorCapture) InteriorMirrorCapture->CaptureScene();
+	if (RightMirrorCapture) RightMirrorCapture->CaptureScene();
 }
 
 void AKeMuSanPawn::Tick(float DeltaSeconds)
@@ -327,6 +471,26 @@ void AKeMuSanPawn::Tick(float DeltaSeconds)
 	// 观察计时与镜面光学视线刷新
 	HeadCheckTimer = FMath::Max(0.f, HeadCheckTimer - DeltaSeconds);
 	UpdateMirrorOptics();
+
+	// 时间片轮流捕获三面光学后视镜：总刷新 30Hz（每 0.033s 捕获一面），单面镜 ~10Hz，杜绝每帧全城重画3次
+	MirrorCaptureTimer += DeltaSeconds;
+	if (MirrorCaptureTimer >= 0.033f)
+	{
+		MirrorCaptureTimer = 0.f;
+		if (NextMirrorToCapture == 0 && LeftMirrorCapture)
+		{
+			LeftMirrorCapture->CaptureScene();
+		}
+		else if (NextMirrorToCapture == 1 && InteriorMirrorCapture)
+		{
+			InteriorMirrorCapture->CaptureScene();
+		}
+		else if (NextMirrorToCapture == 2 && RightMirrorCapture)
+		{
+			RightMirrorCapture->CaptureScene();
+		}
+		NextMirrorToCapture = (NextMirrorToCapture + 1) % 3;
+	}
 }
 
 void AKeMuSanPawn::AxisThrottle(float V)
@@ -432,6 +596,7 @@ void AKeMuSanPawn::ResetVehicle(const FVector& Loc, const FRotator& Rot)
 	EngineRpm = 900.f;
 	Gear = EGear::N;
 	ThrottleInput = 0.f;
+	SmoothedThrottle = 0.f;
 	BrakeInput = 0.f;
 	SteeringInput = 0.f;
 	bStalled = false;
@@ -439,6 +604,7 @@ void AKeMuSanPawn::ResetVehicle(const FVector& Loc, const FRotator& Rot)
 	SignalYawAccum = 0.f;
 	bHandbrake = true;
 	bSeatbelt = false;
+	bDrivable = false;
 	bLowBeam = false;
 	bHighBeam = false;
 	bFogLamp = false;
@@ -589,6 +755,7 @@ void AKeMuSanPawn::AdjustActiveMirror(float DeltaPitch, float DeltaYaw)
 	}
 
 	UpdateMirrorOptics();
+	CaptureAllMirrorsImmediate();
 }
 
 void AKeMuSanPawn::ResetActiveMirrorToStandard()
@@ -619,6 +786,7 @@ void AKeMuSanPawn::ResetActiveMirrorToStandard()
 	}
 
 	UpdateMirrorOptics();
+	CaptureAllMirrorsImmediate();
 }
 
 void AKeMuSanPawn::ResetAllMirrorsToStandard()
@@ -645,6 +813,7 @@ void AKeMuSanPawn::ResetAllMirrorsToStandard()
 	InteriorMirrorState.Tip = TEXT("标准到位：后挡风玻璃完整居中");
 
 	UpdateMirrorOptics();
+	CaptureAllMirrorsImmediate();
 }
 
 const FMirrorOpticalState& AKeMuSanPawn::GetMirrorState(EMirrorType Type) const
@@ -665,11 +834,11 @@ void AKeMuSanPawn::UpdateMirrorOptics()
 {
 	if (LeftMirrorCapture)
 	{
-		LeftMirrorCapture->SetRelativeRotation(FRotator(-2.f + LeftMirrorState.Pitch, 172.f + LeftMirrorState.Yaw, 0.f));
+		LeftMirrorCapture->SetRelativeRotation(FRotator(-2.f + LeftMirrorState.Pitch, 196.f + LeftMirrorState.Yaw, 0.f));
 	}
 	if (RightMirrorCapture)
 	{
-		RightMirrorCapture->SetRelativeRotation(FRotator(-4.f + RightMirrorState.Pitch, -172.f + RightMirrorState.Yaw, 0.f));
+		RightMirrorCapture->SetRelativeRotation(FRotator(-3.f + RightMirrorState.Pitch, 164.f + RightMirrorState.Yaw, 0.f));
 	}
 	if (InteriorMirrorCapture)
 	{
@@ -702,17 +871,35 @@ void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 		}
 	}
 
+	// ---- 物理踏板平滑：将键盘瞬态 (0->1) 模拟为人脚物理踩踏与离合联动响应 ----
+	const float TargetThrottle = ThrottleInput;
+	if (TargetThrottle > SmoothedThrottle)
+	{
+		// 踩油门平滑上升率（约 0.4 秒踩满），消除键盘 W 单帧跳变造成的非物理冲击
+		SmoothedThrottle = FMath::Min(TargetThrottle, SmoothedThrottle + 2.5f * DT);
+	}
+	else
+	{
+		// 松油门回弹
+		SmoothedThrottle = FMath::Max(TargetThrottle, SmoothedThrottle - 4.5f * DT);
+	}
+
 	const int32 GearIdx = static_cast<int32>(Gear);
-	const bool bHasPower = (Gear != EGear::N) && !bStalled;
+	// 驱动力仅在车辆处于可驾驶阶段（Ready/Driving/PullOver）且挂挡未熄火时生效；Menu/Prep/LightTest 阶段严禁滑走
+	const bool bHasPower = bDrivable && (Gear != EGear::N) && !bStalled;
 
 	// ---- 驱动力：向目标车速逼近（模拟油门开度决定车速） ----
 	if (bHasPower)
 	{
 		const float Sign = (Gear == EGear::R) ? -1.f : 1.f;
-		const float Desired = Sign * GearMaxSpeed[GearIdx] * (0.12f + 0.88f * ThrottleInput);
+		const float Desired = Sign * GearMaxSpeed[GearIdx] * (0.12f + 0.88f * SmoothedThrottle);
 		const float MaxStep = GearAccel[GearIdx] * DT;
 		const float Diff = Desired - SpeedMs;
 		SpeedMs += FMath::Clamp(Diff, -MaxStep, MaxStep);
+	}
+	else if (!bDrivable)
+	{
+		SpeedMs = 0.f;
 	}
 
 	// ---- 刹车 ----
@@ -736,12 +923,10 @@ void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 		SpeedMs = (FMath::Abs(SpeedMs) <= Resist) ? 0.f : SpeedMs - FMath::Sign(SpeedMs) * Resist;
 	}
 
-	// ---- 熄火：静止时猛给油 / 高挡位大油门起步 ----
-	if (!bStalled && StallCooldown <= 0.f && Gear != EGear::N && FMath::Abs(SpeedMs) < 0.6f)
+	// ---- 熄火判定：1挡正常键盘连续W起步平稳不熄火；静止2挡及以上大油门起步、或高挡极低速拖挡合理熄火 ----
+	if (!bStalled && StallCooldown <= 0.f && Gear != EGear::N && FMath::Abs(SpeedMs) < 0.6f && bDrivable)
 	{
-		const float Rise = ThrottleInput - PrevThrottle;
-		bool bWillStall = (Rise > 0.45f);
-		bWillStall = bWillStall || (GearIdx >= static_cast<int32>(EGear::G2) && ThrottleInput > 0.55f);
+		bool bWillStall = (GearIdx >= static_cast<int32>(EGear::G2) && SmoothedThrottle > 0.40f);
 		if (bWillStall)
 		{
 			bStalled = true;
@@ -801,12 +986,12 @@ void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 	}
 	else if (Gear == EGear::N || Gear == EGear::R)
 	{
-		EngineRpm = IdleRpm + ThrottleInput * 1500.f;
+		EngineRpm = IdleRpm + SmoothedThrottle * 1500.f;
 	}
 	else
 	{
 		const float Ratio = FMath::Clamp(FMath::Abs(SpeedMs) / FMath::Max(0.1f, FMath::Abs(GearMaxSpeed[GearIdx])), 0.f, 1.f);
-		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.35f + 0.65f * ThrottleInput);
+		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.35f + 0.65f * SmoothedThrottle);
 	}
 }
 
@@ -822,16 +1007,24 @@ void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 		if (FlashHighTimer <= 0.f) { bFlashHigh = false; }
 	}
 
+	const float TargetThrottle = ThrottleInput;
+	if (TargetThrottle > SmoothedThrottle)
+	{
+		SmoothedThrottle = FMath::Min(TargetThrottle, SmoothedThrottle + 2.5f * DT);
+	}
+	else
+	{
+		SmoothedThrottle = FMath::Max(TargetThrottle, SmoothedThrottle - 4.5f * DT);
+	}
+
 	// Auto shift based on speed
 	const float SpdKmh = FMath::Abs(SpeedMs) * 3.6f;
 	if (Gear == EGear::G1 || Gear == EGear::G2 || Gear == EGear::G3 || Gear == EGear::G4 || Gear == EGear::G5)
 	{
-		// Shift before the current gear reaches its modeled speed ceiling.
-		if (ThrottleInput > 0.3f && SpdKmh > 10.f) Gear = EGear::G2;  // 2nd
-		if (ThrottleInput > 0.3f && SpdKmh > 18.f) Gear = EGear::G3;  // 3rd
-		if (ThrottleInput > 0.3f && SpdKmh > 30.f) Gear = EGear::G4;  // 4th
-		if (ThrottleInput > 0.3f && SpdKmh > 42.f) Gear = EGear::G5;  // 5th
-		// Auto downshift when coasting slow
+		if (SmoothedThrottle > 0.3f && SpdKmh > 10.f) Gear = EGear::G2;
+		if (SmoothedThrottle > 0.3f && SpdKmh > 18.f) Gear = EGear::G3;
+		if (SmoothedThrottle > 0.3f && SpdKmh > 30.f) Gear = EGear::G4;
+		if (SmoothedThrottle > 0.3f && SpdKmh > 42.f) Gear = EGear::G5;
 		if (SpdKmh < 10.f && Gear != EGear::G1 && Gear != EGear::G2)
 		{
 			Gear = EGear::G1;
@@ -843,17 +1036,21 @@ void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 	}
 
 	const int32 GearIdx = static_cast<int32>(Gear);
-	const bool bHasPower = (Gear != EGear::N) && !bStalled;
+	const bool bHasPower = bDrivable && (Gear != EGear::N) && !bStalled;
 
 	// ---- 驱动力 ----
 	if (bHasPower)
 	{
 		const float Sign = (Gear == EGear::R) ? -1.f : 1.f;
-		const float Desired = Sign * GearMaxSpeed[FMath::Clamp(GearIdx, 0, 6)] * (0.15f + 0.85f * ThrottleInput);
+		const float Desired = Sign * GearMaxSpeed[FMath::Clamp(GearIdx, 0, 6)] * (0.15f + 0.85f * SmoothedThrottle);
 		const int32 AccelIdx = FMath::Clamp(GearIdx, 0, 6);
 		const float MaxStep = GearAccel[AccelIdx] * DT;
 		const float Diff = Desired - SpeedMs;
 		SpeedMs += FMath::Clamp(Diff, -MaxStep, MaxStep);
+	}
+	else if (!bDrivable)
+	{
+		SpeedMs = 0.f;
 	}
 
 	// ---- 刹车 ----
@@ -870,7 +1067,7 @@ void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 		SpeedMs = (FMath::Abs(SpeedMs) <= Step) ? 0.f : SpeedMs - FMath::Sign(SpeedMs) * Step;
 	}
 
-	// ---- 行驶阻力（比手动挡略小，自动挡有液力变矩器辅助）----
+	// ---- 行驶阻力 ----
 	if (FMath::Abs(SpeedMs) > 0.005f)
 	{
 		const float Resist = (0.10f + 0.0028f * SpeedMs * SpeedMs) * DT;
@@ -918,12 +1115,12 @@ void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 	const float MaxRpm = 5500.f;
 	if (Gear == EGear::N)
 	{
-		EngineRpm = IdleRpm + ThrottleInput * 1200.f;
+		EngineRpm = IdleRpm + SmoothedThrottle * 1200.f;
 	}
 	else
 	{
 		const float Ratio = FMath::Clamp(FMath::Abs(SpeedMs) / FMath::Max(0.1f, FMath::Abs(GearMaxSpeed[FMath::Clamp(GearIdx, 0, 6)])), 0.f, 1.f);
-		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.4f + 0.6f * ThrottleInput);
+		EngineRpm = IdleRpm + Ratio * (MaxRpm - IdleRpm) * (0.4f + 0.6f * SmoothedThrottle);
 	}
 }
 
@@ -970,7 +1167,9 @@ void AKeMuSanPawn::UpdateVisuals(float DT)
 	LightMatL->SetVectorParameterValue(FName("Color"), HeadColor);
 	LightMatR->SetVectorParameterValue(FName("Color"), HeadColor);
 
-	// 前轮随转向角动态旋转（圆柱轮轴沿Y横卧，Roll=90°，Yaw叠加转向角，杜绝yaw90/pitch90错位）
+	// 前轮与外侧独立金属轮毂随转向角动态旋转（圆柱轮轴沿Y横卧 Roll=90°，Yaw叠加转向角）
 	if (WheelFL) WheelFL->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
 	if (WheelFR) WheelFR->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
+	if (RimFL) RimFL->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
+	if (RimFR) RimFR->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
 }

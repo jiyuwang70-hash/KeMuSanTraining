@@ -6,6 +6,8 @@
 #include "GameFramework/Actor.h"
 #include "ExamTypes.h"
 #include "RoadLayout.h"
+#include "ExamErrorAnalyzer.h"
+#include "ExamSaveGame.h"
 #include "ExamController.generated.h"
 
 class AKeMuSanPawn;
@@ -39,6 +41,10 @@ public:
 	// 暂停状态变化
 	void OnPauseChanged(bool bPaused);
 
+	// 判罚与结束
+	void AddDeduction(int32 Points, const FString& Reason);
+	void FinishExam();
+
 	// ---- 供 HUD 读取 ----
 	EExamPhase GetPhase() const { return Phase; }
 	int32 GetScore() const { return Score; }
@@ -71,6 +77,15 @@ public:
 	float GetCurS() const { return CurS; }
 	ETransmissionType GetTransmission() const { return Transmission; }
 
+	// 供 HUD 读取诊断与历史档案
+	const FExamAnalysisResult& GetLastAnalysisResult() const { return LastAnalysisResult; }
+	UExamSaveGame* GetSaveGame() const { return CachedSaveGame; }
+	bool IsShowingHistoryPanel() const { return bShowingHistoryPanel; }
+	void ToggleHistoryPanel();
+	void RefreshArchive();
+	void SetShowingHistoryPanel(bool bShow) { bShowingHistoryPanel = bShow; }
+	FString GetArchiveStatusText() const { return ArchiveStatusText; }
+
 protected:
 	// ---- 模式与阶段 ----
 	EGamePlayMode PlayMode = EGamePlayMode::GuidedPractice;
@@ -86,6 +101,19 @@ protected:
 	bool bFailIssued = false;
 	FString CurrentPrompt;
 	FString ResultLine;
+
+	// ---- 训练用时与里程统计 ----
+	float ExamStartTime = 0.f;
+	float ExamDurationSeconds = 0.f;
+	float ActualDistanceMeters = 0.f;
+	FVector LastDistanceLocation = FVector::ZeroVector;
+	FString ArchiveStatusText;
+
+	// ---- 错误分析报告与学员存档 ----
+	FExamAnalysisResult LastAnalysisResult;
+	UPROPERTY()
+	UExamSaveGame* CachedSaveGame = nullptr;
+	bool bShowingHistoryPanel = false;
 
 	// ---- 灯光模拟 ----
 	TArray<FLightQuestion> LightPool;
@@ -141,6 +169,8 @@ protected:
 	float UTurnYawRef = 180.f;
 	float UTurnDeltaMin = 0.f;
 	float UTurnDeltaMax = 0.f;
+	float UTurnPreviousYaw = 180.f;
+	float UTurnAccumulatedYaw = 0.f;
 	bool bUTurnSignalUsed = false;
 	bool bUTurnObserved = false;
 	bool bUTurnSpeedCharged = false;
@@ -210,9 +240,7 @@ protected:
 	// ---- 内部工具 ----
 	void SetPhase(EExamPhase NewPhase);
 	void SetPrompt(const FString& Text);
-	void AddDeduction(int32 Points, const FString& Reason);
 	void FailExam(const FString& Reason);
-	void FinishExam();
 	void ApplyPresentationDefaults(const TCHAR* Context);
 	void StartPresentationGuard();
 
@@ -245,6 +273,7 @@ protected:
 	void TickOvertake(float DT);
 	void TickGearShift(float DT);
 	void TickUTurn(float DT);
+	void RunRouteGeometryTest();
 	void TickPullOverTrigger(float DT);
 
 	// 自动驾驶（仅 -autotest）

@@ -20,6 +20,17 @@ enum class ETransmissionType : uint8
 	Auto      UMETA(DisplayName = "自动挡")
 };
 
+// 扣分违规所属维度类别
+UENUM(BlueprintType)
+enum class EErrorCategory : uint8
+{
+	ObservationSafety UMETA(DisplayName = "安全观察类"),
+	LightingSignal    UMETA(DisplayName = "灯光信号类"),
+	VehicleControl    UMETA(DisplayName = "车辆操纵类"),
+	RulesAndWay       UMETA(DisplayName = "路权规范类"),
+	Other             UMETA(DisplayName = "其他综合类")
+};
+
 // 考试阶段
 UENUM(BlueprintType)
 enum class EExamPhase : uint8
@@ -104,6 +115,7 @@ struct FDeduction
 
 	UPROPERTY(BlueprintReadOnly) int32 Points = 0;
 	UPROPERTY(BlueprintReadOnly) FString Reason;
+	// 从本场开始计时的秒数（暂停时间不累计）。
 	UPROPERTY(BlueprintReadOnly) float TimeSeconds = 0.f;
 };
 
@@ -114,6 +126,6 @@ struct FZoneStatus
 	GENERATED_BODY()
 
 	UPROPERTY(BlueprintReadOnly) FString Name;
-	// 0 未考  1 进行中  2 已完成
+	// 0 未考  1 进行中  2 已完成  3 引导练习跳过
 	UPROPERTY(BlueprintReadOnly) int32 State = 0;
 };

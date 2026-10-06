@@ -293,7 +293,9 @@ void ARoadBuilder::BuildRoadSurface()
 
 	// 西段两侧
 	const TArray<FRun> CdRuns = { { -30.f, 164.f }, { 182.f, 230.f }, { 250.f, 498.f } };
-	WalkBandX(323.85f, 326.35f, CdRuns);
+	const TArray<FRun> CdNorthRuns = { { -30.f, 164.f }, { 182.f, 230.f },
+		{ 250.f, UTurnClearanceMinX }, { UTurnClearanceMaxX, 498.f } };
+	WalkBandX(323.85f, 326.35f, CdNorthRuns);
 	WalkBandX(313.65f, 316.15f, CdRuns);
 
 	// 北段两侧
@@ -317,11 +319,14 @@ void ARoadBuilder::BuildRoadSurface()
 	WalkwayStrip(FVector2D(534.f, 328.35f), FVector2D(664.f, 330.85f));
 	WalkwayStrip(FVector2D(534.f, 309.15f), FVector2D(664.f, 311.65f));
 
-	// ---- 掉头区路面（南绕弧）及返回车道 ----
-	// U-turn path: rectangular zone south of west segment for the car to turn through
-	AsphaltRect(FVector2D(340.f, 290.f), FVector2D(400.f, 320.f));   // U-turn zone
-	// Return lane: y=323.5, x from 340 to 486
-	AsphaltRect(FVector2D(340.f, 320.f), FVector2D(486.f, 327.f));
+	// ---- 北侧连续掉头区及独立返回车道 ----
+	// 掉头中心线 x=370..382、y=320..354，两侧至少保留 3.5m 沥青。
+	AsphaltRect(FVector2D(UTurnMidA.X - RoadHalfWidth, WestToUTurn.Y - RoadHalfWidth),
+		FVector2D(WestToUTurn.X + RoadHalfWidth, ReturnCenterY + RoadHalfWidth));
+	AsphaltRect(FVector2D(ReturnStart.X, ReturnCenterY - RoadHalfWidth),
+		FVector2D(ReturnEnd.X + 6.f, ReturnCenterY + RoadHalfWidth));
+	WalkwayStrip(FVector2D(ReturnStart.X + 5.f, ReturnCenterY + 3.85f),
+		FVector2D(ReturnEnd.X + 6.f, ReturnCenterY + 6.35f));
 
 	// ---- 主线路缘石 ----
 	auto CurbStripX = [&](float YCenter, const TArray<FRun>& Runs)
@@ -334,8 +339,11 @@ void ARoadBuilder::BuildRoadSurface()
 	};
 	CurbStripX(3.67f, AbRuns);
 	CurbStripX(-3.67f, AbRuns);
-	CurbStripX(323.67f, CdRuns);
+	CurbStripX(323.67f, CdNorthRuns);
 	CurbStripX(316.33f, CdRuns);
+	const TArray<FRun> ReturnRuns = { { static_cast<float>(ReturnStart.X) + 5.f, static_cast<float>(ReturnEnd.X) + 6.f } };
+	CurbStripX(ReturnCenterY + RoadHalfWidth + 0.17f, ReturnRuns);
+	CurbStripX(ReturnCenterY - RoadHalfWidth - 0.17f, ReturnRuns);
 	AddPiece(CubeMesh, FVector(520.f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
 	AddPiece(CubeMesh, FVector(523.67f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
 }
@@ -404,7 +412,8 @@ void ARoadBuilder::BuildMarkings()
 	EdgeX(516.5f, 21.f, 306.f); EdgeX(523.5f, 21.f, 306.f);
 	// 西段
 	EdgeY(316.5f, -30.f, 158.f); EdgeY(316.5f, 190.f, 228.f); EdgeY(316.5f, 252.f, 498.f);
-	EdgeY(323.5f, -30.f, 158.f); EdgeY(323.5f, 190.f, 228.f); EdgeY(323.5f, 252.f, 498.f);
+	EdgeY(323.5f, -30.f, 158.f); EdgeY(323.5f, 190.f, 228.f);
+	EdgeY(323.5f, 252.f, UTurnClearanceMinX); EdgeY(323.5f, UTurnClearanceMaxX, 498.f);
 	// 弯道弧段
 	auto ArcEdges = [&](float FromS, float ToS)
 	{
@@ -421,6 +430,9 @@ void ARoadBuilder::BuildMarkings()
 	};
 	ArcEdges(527.f, 547.f);
 	ArcEdges(841.f, 861.f);
+	ArcEdges(UTurnEntryS, UTurnCompleteS);
+	EdgeY(ReturnCenterY - RoadHalfWidth, ReturnStart.X, ReturnEnd.X + 6.f);
+	EdgeY(ReturnCenterY + RoadHalfWidth, ReturnStart.X, ReturnEnd.X + 6.f);
 	// 横向街道边缘
 	EdgeX(166.f, -78.f, 418.f); EdgeX(180.f, -78.f, 418.f);
 	EdgeX(512.f, -58.f, 418.f); EdgeX(528.f, -58.f, 418.f);
@@ -447,29 +459,34 @@ void ARoadBuilder::BuildMarkings()
 	PaintArrow(FVector(450.f, 318.25f, 0.068f), 180.f);  // 西段直行
 	PaintArrow(FVector(400.f, 318.25f, 0.068f), 180.f);  // 掉头区前
 
-	// ---- 靠边停车参考线（返回段右侧路缘石 30cm / 50cm）----
-	AddBox(FVector(412.f, 323.4f, 0.072f), FVector(112.f, 0.07f, 0.04f), FLinearColor(0.92f, 0.76f, 0.15f));
-	AddBox(FVector(412.f, 323.1f, 0.072f), FVector(112.f, 0.07f, 0.04f), FLinearColor(0.92f, 0.3f, 0.25f));
-
-	// ---- 掉头区标线 ----
-	for (int32 i = 0; i < 4; ++i)
+	// ---- 靠边停车区：实际路缘石内沿、车辆半宽与评分距离使用同一参数 ----
+	const float ParkingFromX = ReturnStart.X + (PullOverMinS - ReturnStartS);
+	const float ParkingToX = ReturnStart.X + (PullOverMaxS - ReturnStartS);
+	const float ParkingCenterX = (ParkingFromX + ParkingToX) * 0.5f;
+	const float ParkingLength = ParkingToX - ParkingFromX;
+	AddBox(FVector(ParkingCenterX, ReturnCenterY + PullOverGapBase - 0.30f, 0.072f),
+		FVector(ParkingLength, 0.07f, 0.03f), FLinearColor(0.92f, 0.76f, 0.15f));
+	AddBox(FVector(ParkingCenterX, ReturnCenterY + PullOverGapBase - 0.50f, 0.072f),
+		FVector(ParkingLength, 0.07f, 0.03f), FLinearColor(0.92f, 0.3f, 0.25f));
+	for (float X : { ParkingFromX, ParkingToX })
 	{
-		AddBox(FVector(384.f, 317.2f + i * 3.2f, 0.068f), FVector(2.2f, 0.14f, 0.03f), ColLineWhite);
-		AddBox(FVector(340.f, 317.2f + i * 3.2f, 0.068f), FVector(2.2f, 0.14f, 0.03f), ColLineWhite);
+		AddBox(FVector(X, ReturnCenterY + 1.8f, 0.072f), FVector(0.14f, 3.2f, 0.03f), ColLineWhite);
 	}
-	// 掉头区锥桶（外侧弧线）
-	const FVector Cones[] =
+	for (float S : { (UTurnEntryS + UTurnArc1EndS) * 0.5f,
+		(UTurnArc1EndS + UTurnStraightEndS) * 0.5f,
+		(UTurnStraightEndS + UTurnCompleteS) * 0.5f })
 	{
-		FVector(379.f, 327.6f, 0.f),
-		FVector(370.f, 328.1f, 0.f),
-		FVector(361.f, 328.1f, 0.f),
-		FVector(352.f, 327.6f, 0.f),
-		FVector(384.f, 315.8f, 0.f),
-		FVector(340.f, 315.8f, 0.f)
-	};
-	for (const FVector& C : Cones)
+		const FVector P = Track.LocAtS(S, LaneWidth * 0.5f);
+		const FVector T = Track.TangentAtS(S);
+		PaintArrow(FVector(P.X, P.Y, 0.068f), FMath::RadiansToDegrees(FMath::Atan2(T.Y, T.X)));
+	}
+	PaintArrow(FVector(ReturnStart.X + 20.f, ReturnCenterY + LaneWidth * 0.5f, 0.068f), 0.f);
+
+	// 锥桶沿掉头区外侧边线放置，不侵入车辆的正常右侧行驶轨迹。
+	for (float S = UTurnEntryS + 4.f; S < UTurnCompleteS - 4.f; S += 8.f)
 	{
-		AddCone(C + FVector(0.f, 0.f, 0.35f), FVector(0.5f, 0.5f, 0.7f), FLinearColor(1.f, 0.45f, 0.08f));
+		const FVector P = Track.LocAtS(S, CurbDistance + 0.8f);
+		AddCone(P + FVector(0.f, 0.f, 0.35f), FVector(0.5f, 0.5f, 0.7f), FLinearColor(1.f, 0.45f, 0.08f));
 	}
 }
 
@@ -643,6 +660,12 @@ void ARoadBuilder::BuildCityBlocks()
 		{
 			for (float GY = Blk.Y1 + 12.f; GY < Blk.Y2 - 10.f; GY += 24.f)
 			{
+				// 为新返回道路和掉头区预留整幅建筑/树冠余量，避免路上长出楼栋。
+				if (GX >= UTurnMidA.X - 18.f && GX <= ReturnEnd.X + 18.f &&
+					GY >= WestToUTurn.Y - 18.f && GY <= ReturnCenterY + 18.f)
+				{
+					continue;
+				}
 				const float Roll = Rand.FRand();
 				if (Roll > 0.74f)
 				{

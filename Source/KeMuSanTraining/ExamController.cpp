@@ -5,6 +5,9 @@
 #include "Engine/World.h"
 #include "GameFramework/PlayerController.h"
 #include "TimerManager.h"
+#include "GenericPlatform/GenericPlatformMisc.h"
+#include "GameFramework/HUD.h"
+#include "HighResScreenshot.h"
 
 #include "KeMuSanPawn.h"
 #include "RoadBuilder.h"
@@ -85,8 +88,17 @@ void AExamController::BeginPlay()
 	BuildLightPool();
 	SetupZoneStatuses();
 
+	// 加载历史存档与学员档案
+	CachedSaveGame = UExamSaveGame::LoadOrCreateSaveGame();
+	ArchiveStatusText = CachedSaveGame ? TEXT("") : TEXT("历史档案无法读取，原文件已保留。请检查存档或恢复备份。");
+
 	SetPhase(EExamPhase::Menu);
 	SetPrompt(TEXT(""));
+	if (FParse::Param(FCommandLine::Get(), TEXT("test-route-geometry")))
+	{
+		FTimerHandle TestTimer;
+		GetWorld()->GetTimerManager().SetTimer(TestTimer, this, &AExamController::RunRouteGeometryTest, 0.3f, false);
+	}
 }
 
 void AExamController::BeginExam(bool bIsExam)
@@ -97,6 +109,12 @@ void AExamController::BeginExam(bool bIsExam)
 	Deductions.Reset();
 	bFailIssued = false;
 	ResultLine.Empty();
+	ExamStartTime = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	ExamDurationSeconds = 0.f;
+	ActualDistanceMeters = 0.f;
+	LastAnalysisResult = FExamAnalysisResult();
+	ArchiveStatusText.Empty();
+	bShowingHistoryPanel = false;
 	// The editor can re-apply Wireframe/CSG overlays when PIE enters the exam.
 	ApplyPresentationDefaults(TEXT("BeginExam"));
 	StartPresentationGuard();
@@ -144,6 +162,8 @@ void AExamController::BeginExam(bool bIsExam)
 
 	bUTurnEntered = false;
 	UTurnYawRef = 180.f;
+	UTurnPreviousYaw = 180.f;
+	UTurnAccumulatedYaw = 0.f;
 	UTurnDeltaMin = 0.f;
 	UTurnDeltaMax = 0.f;
 	bUTurnSignalUsed = false;
@@ -199,6 +219,7 @@ void AExamController::BeginExam(bool bIsExam)
 	if (Car)
 	{
 		Car->ResetVehicle(StartPose, FRotator(0.f, 0.f, 0.f));
+		LastDistanceLocation = Car->GetActorLocation();
 	}
 
 	StartS = S_Start;
@@ -347,6 +368,17 @@ void AExamController::Tick(float DeltaSeconds)
 		}
 	}
 
+	// 记录真实移动距离；位置测试或重置造成的瞬移不计入训练里程。
+	const FVector CurrentLocation = Car->GetActorLocation();
+	if (Phase == EExamPhase::Ready || Phase == EExamPhase::Driving || Phase == EExamPhase::PullOver)
+	{
+		const float MovementMeters = FVector::Dist2D(CurrentLocation, LastDistanceLocation) * 0.01f;
+		if (MovementMeters <= FMath::Max(0.f, DeltaSeconds) * 70.f + 0.5f)
+		{
+			ActualDistanceMeters += MovementMeters;
+		}
+	}
+	LastDistanceLocation = CurrentLocation;
 	UpdateProjection();
 	SyncTrafficState();
 
@@ -415,7 +447,7 @@ void AExamController::SetPrompt(const FString& Text)
 
 void AExamController::AddDeduction(int32 Points, const FString& Reason)
 {
-	if (!IsExamScoring())
+	if (!IsExamScoring() || Points <= 0 || Phase == EExamPhase::Menu || Phase == EExamPhase::Finished)
 	{
 		return;
 	}
@@ -423,7 +455,7 @@ void AExamController::AddDeduction(int32 Points, const FString& Reason)
 	FDeduction D;
 	D.Points = Points;
 	D.Reason = Reason;
-	D.TimeSeconds = GetWorld()->GetTimeSeconds();
+	D.TimeSeconds = FMath::Max(0.f, GetWorld()->GetTimeSeconds() - ExamStartTime);
 	Deductions.Add(D);
 }
 
@@ -444,7 +476,7 @@ void AExamController::FailExam(const FString& Reason)
 
 void AExamController::FinishExam()
 {
-	if (Phase == EExamPhase::Finished)
+	if (Phase == EExamPhase::Finished || Phase == EExamPhase::Menu)
 	{
 		return;
 	}
@@ -452,8 +484,12 @@ void AExamController::FinishExam()
 	{
 		Beeper->PlayDoubleDing();
 	}
-	ResultLine = bFailIssued ? TEXT("不合格") : ((Score >= 90) ? TEXT("合格") : TEXT("不合格"));
-	if (bFailIssued)
+	ResultLine = bPractice ? TEXT("练习完成") : (bFailIssued ? TEXT("不合格") : ((Score >= 90) ? TEXT("合格") : TEXT("不合格")));
+	if (bPractice)
+	{
+		SetPrompt(TEXT("练习完成，已记录训练过程。按 Enter 返回菜单"));
+	}
+	else if (bFailIssued)
 	{
 		SetPrompt(TEXT("考试不合格"));
 	}
@@ -465,6 +501,37 @@ void AExamController::FinishExam()
 	{
 		SetPrompt(TEXT("考试不合格（低于90分）请按 Enter 重新开始"));
 	}
+
+	const float CurrentTimeSec = GetWorld() ? GetWorld()->GetTimeSeconds() : 0.f;
+	ExamDurationSeconds = FMath::Max(1.0f, CurrentTimeSec - ExamStartTime);
+	const float DistanceMeters = ActualDistanceMeters;
+
+	// 触发全自动错误分析与教练诊断
+	LastAnalysisResult = UExamErrorAnalyzer::AnalyzeExamSession(Score, bFailIssued, Deductions, ExamDurationSeconds, DistanceMeters);
+
+	// 归档保存当场记录
+	FExamSessionRecord SessionRecord;
+	SessionRecord.SessionId = FGuid::NewGuid().ToString(EGuidFormats::DigitsWithHyphens);
+	SessionRecord.FormattedTime = FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S"));
+	SessionRecord.PlayMode = PlayMode;
+	SessionRecord.Transmission = Transmission;
+	SessionRecord.FinalScore = Score;
+	SessionRecord.bPassed = (!bPractice && !bFailIssued && Score >= 90);
+	SessionRecord.ResultSummary = ResultLine;
+	SessionRecord.DurationSeconds = ExamDurationSeconds;
+	SessionRecord.DistanceMeters = DistanceMeters;
+	SessionRecord.Deductions = Deductions;
+	SessionRecord.ZoneStatuses = ZoneStatuses;
+	SessionRecord.PrimaryWeakness = LastAnalysisResult.PrimaryWeakness;
+	SessionRecord.PrimaryWeaknessName = LastAnalysisResult.PrimaryWeaknessName;
+	SessionRecord.CoachAdvice = (LastAnalysisResult.CoachAdvices.Num() > 0)
+		? LastAnalysisResult.CoachAdvices[0]
+		: TEXT("本次未记录扣分。继续练习起步、观察和停车流程。");
+
+	const bool bArchived = UExamSaveGame::RecordAndSaveSession(SessionRecord, CachedSaveGame);
+	ArchiveStatusText = bArchived ? TEXT("已保存训练记录，按 F3 查看历史与复盘。")
+		: (CachedSaveGame ? CachedSaveGame->LastPersistenceMessage : TEXT("档案无法写入，原文件已保留。请检查存档或恢复备份。"));
+
 	SetPhase(EExamPhase::Finished);
 }
 
@@ -1235,11 +1302,13 @@ void AExamController::TickGearShift(float DT)
 
 void AExamController::TickUTurn(float DT)
 {
-	// 掉头入口（西段西行方向，S=980）
-	if (!bUTurnEntered && bCurAligned && !bCurOnReturn && CurS >= UTurnEntryS)
+	// 掉头入口：提前6米提示，边界与真实几何共用里程。
+	if (!bUTurnEntered && bCurAligned && !bCurOnReturn && CurS >= UTurnEntryS - 6.f)
 	{
 		bUTurnEntered = true;
 		UTurnYawRef = CarYawDeg();
+		UTurnPreviousYaw = UTurnYawRef;
+		UTurnAccumulatedYaw = 0.f;
 		UTurnDeltaMin = 0.f;
 		UTurnDeltaMax = 0.f;
 		SetPrompt(TEXT("掉头：开启左转向灯（Q），观察（M），减速后在掉头区掉头"));
@@ -1265,7 +1334,6 @@ void AExamController::TickUTurn(float DT)
 		bUTurnObserved = true;
 	}
 
-	// 自动挡：简单完成判定
 
 	if (!bUTurnSpeedCharged && bCurAligned && !bCurOnReturn && CurS < UTurnEntryS + 8.f && CarSpeedKmh() > UTurnLimit + 1.f)
 	{
@@ -1274,7 +1342,10 @@ void AExamController::TickUTurn(float DT)
 	}
 
 	// 记录转向累计（负值 = 左转）
-	const float Delta = FMath::UnwindDegrees(CarYawDeg() - UTurnYawRef);
+	const float CurrentYaw = CarYawDeg();
+	UTurnAccumulatedYaw += FMath::UnwindDegrees(CurrentYaw - UTurnPreviousYaw);
+	UTurnPreviousYaw = CurrentYaw;
+	const float Delta = UTurnAccumulatedYaw;
 	UTurnDeltaMin = FMath::Min(UTurnDeltaMin, Delta);
 	UTurnDeltaMax = FMath::Max(UTurnDeltaMax, Delta);
 
@@ -1304,17 +1375,8 @@ void AExamController::TickUTurn(float DT)
 		MarkZone(12, 2);
 		SetPrompt(TEXT("掉头完成：沿返回车道行驶，准备靠边停车"));
 	};
-	if (IsAutoTransmission())
-	{
-		if (bCurOnReturn && bCurAligned && CurS >= UTurnCompleteS - 10.f)
-		{
-			EvaluateUTurn();
-			return;
-		}
-	}
-
-	// 完成判定：投影落到返回支线且车头与返回段一致
-	if (bCurOnReturn && bCurAligned && FMath::Abs(CurLat) < RoadHalfWidth)
+	// 完成必须落在最终回程直道，弧线与中间连接段不能提前触发。
+	if (bCurOnReturn && bCurAligned && CurS >= ReturnStartS && FMath::Abs(CurLat) < RoadHalfWidth)
 	{
 		EvaluateUTurn();
 		return;
@@ -1818,4 +1880,130 @@ FString AExamController::GetCurrentExamItemName() const
 	}
 
 	return TEXT("道路安全驾驶");
+}
+
+void AExamController::ToggleHistoryPanel()
+{
+	bShowingHistoryPanel = !bShowingHistoryPanel;
+}
+
+void AExamController::RefreshArchive()
+{
+	// 保存失败的本场仍在缓存中；打开档案时尝试补存，不能用旧记录覆盖它。
+	if (CachedSaveGame && !CachedSaveGame->bLastBinarySaveSucceeded && !CachedSaveGame->LastPersistenceMessage.IsEmpty())
+	{
+		if (!CachedSaveGame->HistorySessions.IsEmpty())
+		{
+			const FExamSessionRecord Pending = CachedSaveGame->HistorySessions[0];
+			UExamSaveGame::RecordAndSaveSession(Pending, CachedSaveGame);
+		}
+		ArchiveStatusText = CachedSaveGame->LastPersistenceMessage;
+		return;
+	}
+	CachedSaveGame = UExamSaveGame::LoadOrCreateSaveGame();
+	if (!CachedSaveGame)
+	{
+		ArchiveStatusText = TEXT("历史档案无法读取，原文件已保留。请检查存档或恢复备份。");
+	}
+}
+
+// 独立几何/考官回归：采样与测试姿态不能视作完整道路驾驶。
+void AExamController::RunRouteGeometryTest()
+{
+	int32 Failures = 0;
+	auto Check = [&](const TCHAR* Name, bool bOk)
+	{
+		if (!bOk) ++Failures;
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanRouteTest] %s %s"), Name, bOk ? TEXT("PASS") : TEXT("FAIL"));
+	};
+	if (!Track || !GetWorld()->GetFirstPlayerController())
+	{
+		Check(TEXT("track_ready"), false);
+		FGenericPlatformMisc::RequestExit(false);
+		return;
+	}
+	FRouteTrack Rebuilt;
+	Rebuilt.Build();
+	const float FirstLength = Rebuilt.TotalLength();
+	Rebuilt.Build();
+	Check(TEXT("rebuild_resets_length"), FMath::IsNearlyEqual(FirstLength, Rebuilt.TotalLength(), 0.01f));
+	Check(TEXT("computed_mileage"), FMath::IsNearlyEqual(Track->GetMainLength(), UTurnEntryS, 0.05f)
+		&& FMath::IsNearlyEqual(Track->TotalLength(), ReturnStartS + FVector::Dist(ReturnStart, ReturnEnd), 0.05f));
+	bool bConnected = true;
+	bool bTangentsSmooth = true;
+	bool bProjectionMatches = true;
+	bool bReturnOnlyAfterTurn = true;
+	float MaxJoinDistance = 0.f;
+	for (int32 i = 0; i < Track->Num(); ++i)
+	{
+		const FRouteTrack::FSample& Sample = Track->GetSample(i);
+		if (i > 0)
+		{
+			const FRouteTrack::FSample& Previous = Track->GetSample(i - 1);
+			const float Distance = FVector::Dist(Sample.Pos, Previous.Pos);
+			MaxJoinDistance = FMath::Max(MaxJoinDistance, Distance);
+			bConnected &= Distance <= 1.1f && Sample.S > Previous.S;
+			bTangentsSmooth &= FVector::DotProduct(Sample.Tangent, Previous.Tangent) >= 0.99f;
+		}
+		const FRouteTrack::FProjResult Projection = Track->Project(Sample.Pos, Sample.Tangent);
+		bProjectionMatches &= FMath::Abs(Projection.S - Sample.S) < 1.1f && Projection.bAligned && Projection.bReturn == Sample.bReturn;
+		bReturnOnlyAfterTurn &= Sample.bReturn == (Sample.S >= ReturnStartS - 0.01f);
+	}
+	Check(TEXT("samples_connected"), bConnected);
+	Check(TEXT("tangents_continuous"), bTangentsSmooth);
+	Check(TEXT("projection_round_trip"), bProjectionMatches);
+	Check(TEXT("return_flag_after_turn"), bReturnOnlyAfterTurn);
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSanRouteTest] geometry samples=%d length=%.3f max_join=%.3f"), Track->Num(), Track->TotalLength(), MaxJoinDistance);
+	BeginExam(true);
+	Check(TEXT("pawn_ready"), Car != nullptr);
+	if (Car)
+	{
+		SetPhase(EExamPhase::Driving);
+		Car->ToggleLeftSignal();
+		Car->NotifyHeadCheck();
+		bool bPremature = false;
+		for (float S = UTurnEntryS - 5.f; S <= ReturnStartS + 1.f; S += 0.25f)
+		{
+			FVector Location = Track->LocAtS(S, 0.f);
+			Location.Z = RoadSurfaceZ;
+			const FVector Tangent = Track->TangentAtS(S);
+			Car->SetTestPose(Location * 100.f, Tangent.Rotation());
+			UpdateProjection();
+			TickUTurn(0.016f);
+			if (CurS < ReturnStartS - 0.01f && bUTurnEvaluated) bPremature = true;
+		}
+		Check(TEXT("no_premature_turn_completion"), bUTurnEntered && !bPremature);
+		Check(TEXT("left_turn_angle_unwrapped"), UTurnDeltaMin < -175.f && UTurnDeltaMax < 5.f);
+		Check(TEXT("turn_completes_on_return"), bUTurnEvaluated && bCurOnReturn && Score == 100 && !bFailIssued);
+	}
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSanRouteTest] complete %s failures=%d scope=geometry_and_exam_fixtures"), Failures == 0 ? TEXT("PASS") : TEXT("FAIL"), Failures);
+	// 夹具验收已结束，停止考试判罚，避免拍图等待期间新增无关结果。
+	SetPhase(EExamPhase::Menu);
+	FString ScreenshotPath;
+	if (Failures == 0 && FParse::Value(FCommandLine::Get(), TEXT("route-screenshot="), ScreenshotPath))
+	{
+		// 静态俯视图展示新道路，不能用于证明真实驾驶完成。
+		APlayerController* PC = GetWorld()->GetFirstPlayerController();
+		const FVector CameraLocation(40000.f, 37800.f, 5000.f);
+		const FVector TargetLocation(38900.f, 33800.f, 0.f);
+		FActorSpawnParameters Params;
+		ACameraActor* Camera = GetWorld()->SpawnActor<ACameraActor>(CameraLocation, (TargetLocation - CameraLocation).Rotation(), Params);
+		if (Camera && PC)
+		{
+			PC->SetViewTarget(Camera);
+			if (PC->GetHUD()) PC->GetHUD()->bShowHUD = false;
+			FTimerHandle ScreenshotTimer;
+			GetWorld()->GetTimerManager().SetTimer(ScreenshotTimer, FTimerDelegate::CreateWeakLambda(this, [ScreenshotPath]()
+			{
+				FScreenshotRequest::RequestScreenshot(ScreenshotPath, false, false);
+			}), 0.7f, false);
+			FTimerHandle ExitTimer;
+			GetWorld()->GetTimerManager().SetTimer(ExitTimer, FTimerDelegate::CreateWeakLambda(this, []()
+			{
+				FGenericPlatformMisc::RequestExit(false);
+			}), 2.f, false);
+			return;
+		}
+	}
+	FGenericPlatformMisc::RequestExit(false);
 }

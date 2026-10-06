@@ -11,9 +11,12 @@
 
 #include "KeMuSanGameMode.h"
 #include "KeMuSanPawn.h"
+#include "KeMuSanPlayerController.h"
 #include "ExamController.h"
 #include "ExamTypes.h"
 #include "RoadLayout.h"
+#include "ExamErrorAnalyzer.h"
+#include "ExamSaveGame.h"
 
 namespace
 {
@@ -80,6 +83,37 @@ void AKeMuSanHUD::DrawTextPixel(const FString& Text, float X, float Y, const FLi
 	// Pixel-Perfect 纯净渲染：严格 1:1 像素映射（Scale=1.0f），无阴影渗透，字体笔画清晰锐利如刀刻
 	Canvas->SetLinearDrawColor(Color);
 	Canvas->DrawText(Font, *Text, FMath::RoundToFloat(X), FMath::RoundToFloat(Y), 1.0f, 1.0f, FFontRenderInfo());
+}
+
+void AKeMuSanHUD::DrawTextWrapped(const FString& Text, float X, float Y, float MaxWidth, int32 MaxLines, const FLinearColor& Color, const UFont* Font, float LineHeight)
+{
+	if (!Canvas || !Font || MaxWidth <= 0.f || MaxLines <= 0) return;
+	TArray<FString> Lines;
+	FString Line;
+	for (const TCHAR Ch : Text)
+	{
+		if (Ch == TEXT('\r')) continue;
+		const FString Candidate = Line + FString::Chr(Ch);
+		if (Ch == TEXT('\n') || (!Line.IsEmpty() && Font->GetStringSize(*Candidate) > MaxWidth))
+		{
+			Lines.Add(Line);
+			Line.Empty();
+			if (Ch == TEXT('\n')) continue;
+		}
+		Line.AppendChar(Ch);
+	}
+	if (!Line.IsEmpty()) Lines.Add(Line);
+	const int32 Count = FMath::Min(MaxLines, Lines.Num());
+	for (int32 Index = 0; Index < Count; ++Index)
+	{
+		FString Visible = Lines[Index];
+		if (Index == Count - 1 && Lines.Num() > MaxLines)
+		{
+			while (!Visible.IsEmpty() && Font->GetStringSize(*(Visible + TEXT("…"))) > MaxWidth) Visible.LeftChopInline(1);
+			Visible += TEXT("…");
+		}
+		DrawTextPixel(Visible, X, Y + Index * LineHeight, Color, Font);
+	}
 }
 
 void AKeMuSanHUD::DrawTextSlateLarge(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 PointSize)
@@ -182,6 +216,7 @@ void AKeMuSanHUD::DrawHUD()
 	if (!GM->IsGameStarted())
 	{
 		DrawMenu();
+		if (EC->IsShowingHistoryPanel()) DrawHistoryAnalysisPanel(EC);
 		return;
 	}
 
@@ -247,6 +282,8 @@ void AKeMuSanHUD::DrawHUD()
 	{
 		DrawPauseOverlay(GM);
 	}
+	// The archive is modal: render it after mirrors, hints and the existing pause overlay.
+	if (EC->IsShowingHistoryPanel()) DrawHistoryAnalysisPanel(EC);
 }
 
 void AKeMuSanHUD::DrawMenu()
@@ -333,14 +370,28 @@ void AKeMuSanHUD::DrawMenu()
 
 	// 下方控制按键简明导览（紧凑高对比底栏）
 	const float InfoW = 920.f;
-	const float InfoH = 92.f;
+	const float InfoH = 112.f;
 	const float InfoX = CX - InfoW * 0.5f;
-	const float InfoY = CY + 115.f;
-	DrawRoundedCard(Canvas, InfoX, InfoY, InfoW, InfoH, FLinearColor(0.06f, 0.08f, 0.12f, 0.85f), ColDarkGray);
+	const float InfoY = CY + 105.f;
+	DrawRoundedCard(Canvas, InfoX, InfoY, InfoW, InfoH, FLinearColor(0.06f, 0.08f, 0.12f, 0.88f), ColDarkGray);
 
-	DrawTextPixel(TEXT("【驾驶操纵】 W/S 踏板(油门/刹车)  |  A/D 转向方向盘  |  空格 手刹  |  F 安全带  |  B 鸣笛  |  M 侧头观察"), InfoX + 20.f, InfoY + 12.f, ColWhite, SmallFont);
-	DrawTextPixel(TEXT("【灯光控制】 Q 左转灯  |  E 右转灯  |  L 大灯(示廓/近光/远光)  |  J 远近闪光交替  |  H 危险双闪  |  K 雾灯"), InfoX + 20.f, InfoY + 38.f, ColCyan, SmallFont);
-	DrawTextPixel(TEXT("【教学辅助】 V 切换座舱/追尾视角  |  T 开启后视镜校准(Tab切镜/方向键微调/R重置)  |  Esc 暂停与恢复"), InfoX + 20.f, InfoY + 64.f, ColYellow, SmallFont);
+	DrawTextPixel(TEXT("【驾驶操纵】 W/S 踏板(油门/刹车)  |  A/D 转向方向盘  |  空格 手刹  |  F 安全带  |  B 鸣笛  |  M 侧头观察"), InfoX + 20.f, InfoY + 10.f, ColWhite, SmallFont);
+	DrawTextPixel(TEXT("【灯光控制】 Q 左转灯  |  E 右转灯  |  L 大灯(示廓/近光/远光)  |  J 远近闪光交替  |  H 危险双闪  |  K 雾灯"), InfoX + 20.f, InfoY + 34.f, ColCyan, SmallFont);
+	DrawTextPixel(TEXT("【教学辅助】 V 切换座舱/追尾视角  |  T 开启后视镜校准(Tab切镜/方向键微调/R重置)  |  Esc 暂停与恢复"), InfoX + 20.f, InfoY + 58.f, ColYellow, SmallFont);
+
+	AExamController* EC = GetExamController();
+	const UExamSaveGame* SaveGame = EC ? EC->GetSaveGame() : nullptr;
+	if (SaveGame && SaveGame->GetSessionCount() > 0)
+	{
+		const double PassRate = SaveGame->TotalExamsCount > 0 ? (static_cast<double>(SaveGame->PassedExamsCount) / SaveGame->TotalExamsCount * 100.0) : 0.0;
+		const FString ArchiveText = FString::Printf(TEXT("【学员档案】模拟考试 %d 场 · 合格率 %.1f%% · 最高 %d 分 · F3 查看训练记录与错题分析"),
+			SaveGame->TotalExamsCount, PassRate, SaveGame->BestScore);
+		DrawTextPixel(ArchiveText, InfoX + 20.f, InfoY + 82.f, ColGreen, SmallFont);
+	}
+	else
+	{
+		DrawTextPixel(TEXT("【学员档案】暂无历史考核记录 · 首次训练完成后将自动归档 · 按 [F3] 随时查看档案面板"), InfoX + 20.f, InfoY + 82.f, ColGray, SmallFont);
+	}
 
 	// 底部脉冲提示文字
 	const float TimeSec = GetWorld()->GetTimeSeconds();
@@ -921,58 +972,44 @@ void AKeMuSanHUD::DrawProgressList(AExamController* EC)
 
 void AKeMuSanHUD::DrawMiniMap(AExamController* EC, AKeMuSanPawn* Car)
 {
-	if (!EC || !Canvas) return;
-	UFont* SmallFont = GEngine->GetMediumFont();
-
-	const float MapW = 180.f;
-	const float MapH = 120.f;
-	const float MapX = Canvas->SizeX - MapW - 18.f;
-	const float MapY = Canvas->SizeY - MapH - 30.f;
-
-	DrawRoundedCard(Canvas, MapX, MapY, MapW, MapH, FLinearColor(0.04f, 0.06f, 0.09f, 0.88f), ColDarkGray);
-	DrawTextPixel(TEXT("路线全景地图"), MapX + 10.f, MapY + 6.f, ColCyan, SmallFont);
-
-	const float EastX1 = MapX + 14.f, EastX2 = MapX + MapW - 14.f;
-	const float WestY = MapY + 26.f;
-	const float EastY = MapY + 62.f;
-	const float NorthX = MapX + MapW - 24.f;
-	const float RetY = MapY + 88.f;
-	const float RetX1 = MapX + 65.f;
-
-	// 路线拓扑线
-	DrawFilledRect(Canvas, EastX1, EastY - 1.f, EastX2 - EastX1, 2.f, FLinearColor(0.5f, 0.55f, 0.6f, 0.9f));
-	DrawFilledRect(Canvas, NorthX - 1.f, WestY, 2.f, EastY - WestY, FLinearColor(0.5f, 0.55f, 0.6f, 0.9f));
-	DrawFilledRect(Canvas, EastX1, WestY - 1.f, NorthX - EastX1, 2.f, FLinearColor(0.5f, 0.55f, 0.6f, 0.9f));
-	DrawFilledRect(Canvas, RetX1, RetY - 1.f, EastX2 - RetX1, 2.f, FLinearColor(0.6f, 0.55f, 0.5f, 0.9f));
-
-	// 考生当前位置亮点
-	const float Prog = EC->GetProgress01();
-	float DotX = EastX1, DotY = EastY;
-	if (Prog < 0.35f)
+	if (!EC || !Canvas || !Car) return;
+	UFont* Font = GEngine->GetMediumFont();
+	const float W = 180.f;
+	const float H = 120.f;
+	const float X = Canvas->SizeX - W - 18.f;
+	const float Y = Canvas->SizeY - H - 30.f;
+	DrawRoundedCard(Canvas, X, Y, W, H, FLinearColor(0.04f, 0.06f, 0.09f, 0.92f), ColDarkGray);
+	DrawTextPixel(TEXT("考道 · 实际位置"), X + 10.f, Y + 6.f, ColCyan, Font);
+	// Use the same sampled geometry as the examiner, including both U-turn arcs and the return lane.
+	static const FRouteTrack MapTrack = []() { FRouteTrack Built; Built.Build(); return Built; }();
+	FVector2D Min(TNumericLimits<float>::Max(), TNumericLimits<float>::Max());
+	FVector2D Max(TNumericLimits<float>::Lowest(), TNumericLimits<float>::Lowest());
+	for (int32 Index = 0; Index < MapTrack.Num(); ++Index)
 	{
-		const float Frac = Prog / 0.35f;
-		DotX = EastX1 + (EastX2 - EastX1) * Frac;
-		DotY = EastY;
+		const FVector& P = MapTrack.GetSample(Index).Pos;
+		Min.X = FMath::Min(Min.X, P.X); Min.Y = FMath::Min(Min.Y, P.Y);
+		Max.X = FMath::Max(Max.X, P.X); Max.Y = FMath::Max(Max.Y, P.Y);
 	}
-	else if (Prog < 0.65f)
+	const float Scale = FMath::Min((W - 28.f) / FMath::Max(1.f, Max.X - Min.X), (H - 44.f) / FMath::Max(1.f, Max.Y - Min.Y));
+	const FVector2D Origin(X + (W - (Max.X - Min.X) * Scale) * 0.5f, Y + 30.f + (H - 44.f - (Max.Y - Min.Y) * Scale) * 0.5f);
+	auto ToMap = [&](const FVector& P) { return Origin + FVector2D((P.X - Min.X) * Scale, (Max.Y - P.Y) * Scale); };
+	for (int32 Index = 0; Index + 1 < MapTrack.Num(); Index += 8)
 	{
-		const float Frac = (Prog - 0.35f) / 0.30f;
-		DotX = NorthX;
-		DotY = EastY - (EastY - WestY) * Frac;
+		const int32 Next = FMath::Min(Index + 8, MapTrack.Num() - 1);
+		FCanvasLineItem Line(ToMap(MapTrack.GetSample(Index).Pos), ToMap(MapTrack.GetSample(Next).Pos));
+		Line.SetColor(MapTrack.GetSample(Index).bReturn ? ColOrange : ColGray);
+		Line.LineThickness = 2.f;
+		Canvas->DrawItem(Line);
 	}
-	else if (Prog < 0.82f)
-	{
-		const float Frac = (Prog - 0.65f) / 0.17f;
-		DotX = NorthX - (NorthX - EastX1) * Frac;
-		DotY = WestY;
-	}
-	else
-	{
-		const float Frac = FMath::Clamp((Prog - 0.82f) / 0.18f, 0.f, 1.f);
-		DotX = RetX1 + (EastX2 - RetX1) * Frac;
-		DotY = RetY;
-	}
-	DrawFilledRect(Canvas, DotX - 3.5f, DotY - 3.5f, 7.f, 7.f, ColGreen);
+	FVector2D Dot = ToMap(Car->GetActorLocation() / 100.f);
+	Dot.X = FMath::Clamp(Dot.X, X + 5.f, X + W - 5.f);
+	Dot.Y = FMath::Clamp(Dot.Y, Y + 28.f, Y + H - 5.f);
+	DrawFilledRect(Canvas, Dot.X - 3.f, Dot.Y - 3.f, 6.f, 6.f, ColGreen);
+	const FVector Forward = Car->GetActorForwardVector();
+	FCanvasLineItem Heading(Dot, Dot + FVector2D(Forward.X, -Forward.Y) * 9.f);
+	Heading.SetColor(ColGreen);
+	Heading.LineThickness = 2.f;
+	Canvas->DrawItem(Heading);
 }
 
 void AKeMuSanHUD::DrawLightTestPanel(AExamController* EC)
@@ -1016,45 +1053,226 @@ void AKeMuSanHUD::DrawLightTestPanel(AExamController* EC)
 
 void AKeMuSanHUD::DrawResultPanel(AExamController* EC, AKeMuSanGameMode* GM)
 {
-	UFont* BigFont = GEngine->GetLargeFont();
-	UFont* SmallFont = GEngine->GetMediumFont();
-
-	const float W = Canvas->SizeX * 0.60f;
-	const float H = 480.f;
+	if (!Canvas || !EC) return;
+	UFont* Font = GEngine->GetMediumFont();
+	UFont* TitleFont = GEngine->GetLargeFont();
+	const bool bPractice = EC->IsPractice();
+	const bool bPass = !bPractice && !EC->IsFailIssued() && EC->GetScore() >= 90;
+	const FLinearColor Accent = bPractice ? ColCyan : (bPass ? ColGreen : ColRed);
+	const float W = FMath::Min(1060.f, Canvas->SizeX - 40.f);
+	const float H = FMath::Min(610.f, Canvas->SizeY - 40.f);
 	const float X = (Canvas->SizeX - W) * 0.5f;
-	const float Y = (Canvas->SizeY - H) * 0.5f - 20.f;
-
-	const bool bPass = !EC->IsFailIssued() && EC->GetScore() >= 90;
-	DrawRoundedCard(Canvas, X, Y, W, H, FLinearColor(0.04f, 0.06f, 0.09f, 0.95f), bPass ? ColGreen : ColRed, 3.0f);
-
-	const FString ResultTitle = bPass ? TEXT("★ 考试成绩：合 格 ★") : TEXT("✕ 考试成绩：不合格 ✕");
-	DrawTextBig(ResultTitle, X + (W - BigFont->GetStringSize(*ResultTitle) * 2.0f) * 0.5f, Y + 24.f, bPass ? ColGreen : ColRed, BigFont, 2);
-	DrawTextPixel(FString::Printf(TEXT("最终核算得分：%d 分（90分及格）"), EC->GetScore()), X + (W - SmallFont->GetStringSize(TEXT("最终核算得分：100 分（90分及格）"))) * 0.5f, Y + 95.f, ColYellow, SmallFont);
-
-	// 扣分明细卡
-	DrawRoundedCard(Canvas, X + 28.f, Y + 135.f, W - 56.f, 250.f, FLinearColor(0.08f, 0.10f, 0.14f, 0.88f), ColDarkGray);
-	DrawTextPixel(TEXT("—— 扣分与违规明细 ——"), X + (W - SmallFont->GetStringSize(TEXT("—— 扣分与违规明细 ——"))) * 0.5f, Y + 148.f, ColGray, SmallFont);
-
-	const TArray<FDeduction>& Deds = EC->GetDeductions();
-	if (Deds.Num() == 0)
+	const float Y = (Canvas->SizeY - H) * 0.5f;
+	const float ColW = (W - 54.f) * 0.5f;
+	const float LX = X + 18.f;
+	const float RX = LX + ColW + 18.f;
+	const float CY = Y + 100.f;
+	const float CH = H - 192.f;
+	DrawRoundedCard(Canvas, X, Y, W, H, FLinearColor(0.04f, 0.06f, 0.09f, 0.97f), Accent, 2.f);
+	const FString Title = bPractice ? TEXT("引导练习完成 · 训练复盘") : (bPass ? TEXT("模拟考试合格 · 训练复盘") : TEXT("模拟考试未合格 · 训练复盘"));
+	DrawTextSlateLarge(Title, X + 24.f, Y + 18.f, Accent, TitleFont, 26);
+	const FExamAnalysisResult& Analysis = EC->GetLastAnalysisResult();
+	DrawTextWrapped(bPractice ? TEXT("练习仅记录训练过程；不计算模拟考试得分、合格率或最高成绩。") : Analysis.PerformanceRating,
+		X + 24.f, Y + 60.f, W - 48.f, 1, ColGray, Font);
+	DrawRoundedCard(Canvas, LX, CY, ColW, CH, FLinearColor(0.07f, 0.09f, 0.14f, 0.95f), ColDarkGray);
+	DrawRoundedCard(Canvas, RX, CY, ColW, CH, FLinearColor(0.07f, 0.09f, 0.14f, 0.95f), ColGold);
+	DrawTextPixel(TEXT("失误分布与训练重点"), LX + 16.f, CY + 12.f, ColCyan, Font);
+	DrawTextSlateLarge(bPractice ? TEXT("练习记录") : FString::Printf(TEXT("%d 分 / 100 分"), EC->GetScore()), LX + 20.f, CY + 40.f, Accent, TitleFont, 28);
+	auto DrawCategory = [&](float RowY, const FString& Name, int32 Points, int32 Count, const FLinearColor& Color)
 	{
-		DrawTextPixel(TEXT("恭喜！全程规范驾驶，零失误通过考试！"), X + 60.f, Y + 210.f, ColGreen, SmallFont);
+		DrawTextPixel(FString::Printf(TEXT("%s  ·  -%d 分 / %d 次"), *Name, Points, Count), LX + 20.f, RowY, Points > 0 ? Color : ColGray, Font);
+		DrawFilledRect(Canvas, LX + 20.f, RowY + 23.f, ColW - 40.f, 5.f, FLinearColor(0.16f, 0.18f, 0.23f));
+		if (Points > 0) DrawFilledRect(Canvas, LX + 20.f, RowY + 23.f, (ColW - 40.f) * FMath::Clamp(Points / 100.f, 0.f, 1.f), 5.f, Color);
+	};
+	float RowY = CY + 90.f;
+	DrawCategory(RowY, TEXT("安全观察"), Analysis.ObservationDeductions, Analysis.ObservationCount, ColRed);
+	DrawCategory(RowY + 41.f, TEXT("灯光信号"), Analysis.LightingDeductions, Analysis.LightingCount, ColYellow);
+	DrawCategory(RowY + 82.f, TEXT("车辆操纵"), Analysis.VehicleControlDeductions, Analysis.VehicleControlCount, ColCyan);
+	DrawCategory(RowY + 123.f, TEXT("路权规范"), Analysis.RulesAndWayDeductions, Analysis.RulesAndWayCount, ColOrange);
+	DrawTextWrapped(FString::Printf(TEXT("训练重点：%s"), *Analysis.PrimaryWeaknessName), LX + 20.f, CY + CH - 98.f, ColW - 40.f, 2, ColYellow, Font);
+	if (Analysis.OtherDeductions > 0) DrawTextPixel(FString::Printf(TEXT("其他综合失误：-%d 分"), Analysis.OtherDeductions), LX + 20.f, CY + CH - 44.f, ColRed, Font);
+	else DrawTextWrapped(bPractice ? TEXT("按 F3 可查看本场用时、实际行驶距离与历史记录。") : TEXT("按 F3 选择本场记录，查看全部扣分与对应时间。"), LX + 20.f, CY + CH - 46.f, ColW - 40.f, 2, ColGray, Font);
+
+	DrawTextPixel(TEXT("教练复盘与扣分明细"), RX + 16.f, CY + 12.f, ColGold, Font);
+	float AdviceY = CY + 40.f;
+	const int32 NumAdvices = FMath::Min(Analysis.CoachAdvices.Num(), 2);
+	for (int32 Index = 0; Index < NumAdvices; ++Index)
+	{
+		DrawRoundedCard(Canvas, RX + 14.f, AdviceY, ColW - 28.f, 82.f, FLinearColor(0.10f, 0.13f, 0.19f), ColDarkGray);
+		DrawTextWrapped(Analysis.CoachAdvices[Index], RX + 24.f, AdviceY + 9.f, ColW - 48.f, 3, ColWhite, Font);
+		AdviceY += 90.f;
+	}
+	DrawTextPixel(TEXT("本场最近扣分"), RX + 18.f, AdviceY + 3.f, ColGray, Font);
+	const TArray<FDeduction>& Deds = EC->GetDeductions();
+	float ItemY = AdviceY + 28.f;
+	if (Deds.IsEmpty())
+	{
+		DrawTextWrapped(bPractice ? TEXT("引导练习不执行考试扣分，完成训练后可进入模拟考试检验。") : TEXT("本场无扣分记录。"), RX + 20.f, ItemY, ColW - 40.f, 2, bPractice ? ColGray : ColGreen, Font);
 	}
 	else
 	{
-		const int32 ShowCount = FMath::Min(Deds.Num(), 6);
-		float DedY = Y + 180.f;
-		for (int32 i = 0; i < ShowCount; ++i)
+		const int32 AvailableRows = FMath::Max(0, FMath::FloorToInt((CY + CH - 14.f - ItemY) / 42.f));
+		for (int32 Index = 0; Index < FMath::Min(Deds.Num(), AvailableRows); ++Index)
 		{
-			const FDeduction& D = Deds[Deds.Num() - 1 - i];
-			DrawTextPixel(FString::Printf(TEXT("• 扣 %d 分： %s"), D.Points, *D.Reason), X + 45.f, DedY, ColRed, SmallFont);
-			DedY += 32.f;
+			const FDeduction& D = Deds[Deds.Num() - 1 - Index];
+			DrawTextWrapped(FString::Printf(TEXT("- %d 分 · %.1f 秒  %s"), D.Points, D.TimeSeconds, *D.Reason), RX + 20.f, ItemY, ColW - 40.f, 2, ColRed, Font, 20.f);
+			ItemY += 42.f;
 		}
 	}
+	DrawTextWrapped(EC->GetArchiveStatusText(), X + 24.f, Y + H - 76.f, W - 48.f, 1, ColGray, Font);
+	DrawTextWrapped(TEXT("Enter 重新开始    F3 学员档案 / 完整扣分详情"), X + 24.f, Y + H - 42.f, W - 48.f, 1, ColYellow, Font);
+}
 
-	const bool bPulse = (FMath::Fmod(GetWorld()->GetTimeSeconds(), 1.0f) < 0.6f);
-	const FString EnterHint = TEXT("▶ 按 Enter 回车键重新开始 ◀");
-	DrawTextBig(EnterHint, X + (W - BigFont->GetStringSize(*EnterHint)) * 0.5f, Y + H - 52.f, bPulse ? ColYellow : ColWhite, BigFont, 1);
+void AKeMuSanHUD::DrawHistoryAnalysisPanel(AExamController* EC)
+{
+	if (!Canvas || !EC) return;
+	AKeMuSanPlayerController* PC = Cast<AKeMuSanPlayerController>(GetWorld()->GetFirstPlayerController());
+	if (PC && PC->IsShowingHistoryDetails())
+	{
+		DrawHistorySessionDetails(EC);
+		return;
+	}
+	UFont* Font = GEngine->GetMediumFont();
+	UFont* TitleFont = GEngine->GetLargeFont();
+	DrawFilledRect(Canvas, 0.f, 0.f, Canvas->SizeX, Canvas->SizeY, FLinearColor(0.02f, 0.03f, 0.05f, 0.92f));
+	const float W = FMath::Min(1060.f, Canvas->SizeX - 40.f);
+	const float H = FMath::Min(620.f, Canvas->SizeY - 40.f);
+	const float X = (Canvas->SizeX - W) * 0.5f;
+	const float Y = (Canvas->SizeY - H) * 0.5f;
+	DrawRoundedCard(Canvas, X, Y, W, H, FLinearColor(0.05f, 0.07f, 0.11f, 0.99f), ColCyan, 2.f);
+	DrawTextSlateLarge(TEXT("学员档案 · 每一次练习都有记录"), X + 22.f, Y + 18.f, ColCyan, TitleFont, 26);
+	const UExamSaveGame* Save = EC->GetSaveGame();
+	if (!Save || Save->GetSessionCount() == 0)
+	{
+		DrawTextWrapped(Save ? TEXT("暂无训练记录。完成练习或模拟考试后会自动保存，重新打开项目也能继续查看。") : EC->GetArchiveStatusText(),
+			X + 30.f, Y + 116.f, W - 60.f, 3, ColGray, Font);
+		DrawTextPixel(TEXT("F3 / Esc / Enter 关闭档案"), X + 30.f, Y + H - 42.f, ColYellow, Font);
+		return;
+	}
+	const float CardW = (W - 61.f) / 4.f;
+	const float StatsY = Y + 68.f;
+	auto Stat = [&](int32 Index, const FString& Label, const FString& Value, const FLinearColor& ValueColor)
+	{
+		const float SX = X + 20.f + Index * (CardW + 7.f);
+		DrawRoundedCard(Canvas, SX, StatsY, CardW, 68.f, FLinearColor(0.09f, 0.12f, 0.18f), ColDarkGray);
+		DrawTextPixel(Label, SX + 12.f, StatsY + 8.f, ColGray, Font);
+		DrawTextSlateLarge(Value, SX + 12.f, StatsY + 30.f, ValueColor, TitleFont, 24);
+	};
+	const float PassRate = Save->TotalExamsCount > 0 ? 100.f * Save->PassedExamsCount / Save->TotalExamsCount : 0.f;
+	Stat(0, TEXT("训练总场次（考试 + 练习）"), FString::Printf(TEXT("%d 场"), Save->GetSessionCount()), ColWhite);
+	Stat(1, TEXT("模拟考试合格 / 已考"), FString::Printf(TEXT("%d / %d"), Save->PassedExamsCount, Save->TotalExamsCount), ColGreen);
+	Stat(2, TEXT("模拟考试合格率"), Save->TotalExamsCount > 0 ? FString::Printf(TEXT("%.1f%%"), PassRate) : TEXT("尚未考试"), ColYellow);
+	Stat(3, TEXT("模拟考试最高成绩"), Save->TotalExamsCount > 0 ? FString::Printf(TEXT("%d 分"), Save->BestScore) : TEXT("尚未考试"), ColGold);
+	const float CW = (W - 54.f) * 0.5f;
+	const float LX = X + 18.f;
+	const float RX = LX + CW + 18.f;
+	const float CY = StatsY + 84.f;
+	const float CH = H - 258.f;
+	DrawRoundedCard(Canvas, LX, CY, CW, CH, FLinearColor(0.08f, 0.10f, 0.15f), ColDarkGray);
+	DrawRoundedCard(Canvas, RX, CY, CW, CH, FLinearColor(0.08f, 0.10f, 0.15f), ColDarkGray);
+	DrawTextPixel(TEXT("高频错题 · 优先练习薄弱项"), LX + 16.f, CY + 12.f, ColYellow, Font);
+	const TArray<FErrorFrequencyItem> Errors = Save->GetTopFrequentErrors(4);
+	if (Errors.IsEmpty()) DrawTextWrapped(TEXT("暂无模拟考试扣分记录。练习记录不计入考试扣分排行榜。"), LX + 20.f, CY + 50.f, CW - 40.f, 3, ColGray, Font);
+	for (int32 Index = 0; Index < Errors.Num(); ++Index)
+	{
+		const float EY = CY + 40.f + Index * 54.f;
+		DrawRoundedCard(Canvas, LX + 14.f, EY, CW - 28.f, 48.f, FLinearColor(0.11f, 0.13f, 0.19f), Index == 0 ? ColRed : ColDarkGray);
+		DrawTextWrapped(FString::Printf(TEXT("%d. %s · %d 次"), Index + 1, *Errors[Index].CategoryName, Errors[Index].Count), LX + 22.f, EY + 5.f, CW - 44.f, 1, ColYellow, Font, 20.f);
+		DrawTextWrapped(Errors[Index].Reason, LX + 22.f, EY + 26.f, CW - 44.f, 1, ColWhite, Font, 20.f);
+	}
+	if (!Errors.IsEmpty())
+	{
+		const float AY = CY + CH - 101.f;
+		DrawRoundedCard(Canvas, LX + 14.f, AY, CW - 28.f, 88.f, FLinearColor(0.12f, 0.15f, 0.21f), ColGold);
+		DrawTextWrapped(UExamErrorAnalyzer::GetCoachAdviceForReason(Errors[0].Reason), LX + 24.f, AY + 10.f, CW - 48.f, 3, ColWhite, Font);
+	}
+	const int32 Selected = PC ? FMath::Clamp(PC->GetHistorySelectedIndex(), 0, Save->HistorySessions.Num() - 1) : 0;
+	const int32 Page = Selected / 5;
+	const int32 PageCount = FMath::Max(1, (Save->HistorySessions.Num() + 4) / 5);
+	DrawTextPixel(FString::Printf(TEXT("最近训练 · 第 %d / %d 页（保留 20 场）"), Page + 1, PageCount), RX + 16.f, CY + 12.f, ColCyan, Font);
+	for (int32 Row = 0; Row < 5; ++Row)
+	{
+		const int32 Index = Page * 5 + Row;
+		if (!Save->HistorySessions.IsValidIndex(Index)) break;
+		const FExamSessionRecord& Session = Save->HistorySessions[Index];
+		const bool bPractice = Session.PlayMode == EGamePlayMode::GuidedPractice;
+		const bool bSelected = Index == Selected;
+		const float SY = CY + 40.f + Row * 56.f;
+		const FLinearColor Accent = bPractice ? ColCyan : (Session.bPassed ? ColGreen : ColRed);
+		DrawRoundedCard(Canvas, RX + 14.f, SY, CW - 28.f, 50.f, bSelected ? FLinearColor(0.15f, 0.18f, 0.26f) : FLinearColor(0.10f, 0.12f, 0.18f), bSelected ? ColGold : ColDarkGray, bSelected ? 2.f : 1.f);
+		const FString Transmission = Session.Transmission == ETransmissionType::Auto ? TEXT("C2") : TEXT("C1");
+		const FString Outcome = bPractice ? TEXT("练习") : FString::Printf(TEXT("%d分 · %s"), Session.FinalScore, Session.bPassed ? TEXT("合格") : TEXT("未合格"));
+		DrawTextWrapped(FString::Printf(TEXT("%s %s · %s · %s"), bSelected ? TEXT("▶") : TEXT(" "), *Session.FormattedTime.Left(16), *Transmission, *Outcome), RX + 22.f, SY + 5.f, CW - 44.f, 1, Accent, Font);
+		DrawTextWrapped(FString::Printf(TEXT("%.0f秒 / %.1f米 · %s"), Session.DurationSeconds, Session.DistanceMeters,
+			Session.Deductions.IsEmpty() ? (bPractice ? TEXT("引导练习，未进行考试评分") : TEXT("无扣分记录")) : *Session.Deductions[0].Reason), RX + 22.f, SY + 28.f, CW - 44.f, 1, ColGray, Font);
+	}
+	DrawTextWrapped(EC->GetArchiveStatusText(), X + 24.f, Y + H - 80.f, W - 48.f, 1, ColGray, Font);
+	DrawTextWrapped(TEXT("↑↓ 选择记录    PageUp / PageDown 翻页    Enter 查看详情    F3 / Esc 关闭"), X + 24.f, Y + H - 46.f, W - 48.f, 1, ColYellow, Font);
+}
+
+void AKeMuSanHUD::DrawHistorySessionDetails(AExamController* EC)
+{
+	AKeMuSanPlayerController* PC = Cast<AKeMuSanPlayerController>(GetWorld()->GetFirstPlayerController());
+	const UExamSaveGame* Save = EC->GetSaveGame();
+	if (!Canvas || !PC || !Save || !Save->HistorySessions.IsValidIndex(PC->GetHistorySelectedIndex())) return;
+	const FExamSessionRecord& Session = Save->HistorySessions[PC->GetHistorySelectedIndex()];
+	const bool bPractice = Session.PlayMode == EGamePlayMode::GuidedPractice;
+	const FExamAnalysisResult Analysis = UExamErrorAnalyzer::AnalyzeExamSession(Session.FinalScore, !Session.bPassed, Session.Deductions, Session.DurationSeconds, Session.DistanceMeters);
+	UFont* Font = GEngine->GetMediumFont();
+	UFont* TitleFont = GEngine->GetLargeFont();
+	DrawFilledRect(Canvas, 0.f, 0.f, Canvas->SizeX, Canvas->SizeY, FLinearColor(0.02f, 0.03f, 0.05f, 0.94f));
+	const float W = FMath::Min(1060.f, Canvas->SizeX - 40.f);
+	const float H = FMath::Min(620.f, Canvas->SizeY - 40.f);
+	const float X = (Canvas->SizeX - W) * 0.5f;
+	const float Y = (Canvas->SizeY - H) * 0.5f;
+	const float CW = (W - 54.f) * 0.5f;
+	const float LX = X + 18.f;
+	const float RX = LX + CW + 18.f;
+	const float CY = Y + 100.f;
+	const float CH = H - 180.f;
+	DrawRoundedCard(Canvas, X, Y, W, H, FLinearColor(0.05f, 0.07f, 0.11f, 0.99f), ColCyan, 2.f);
+	DrawTextSlateLarge(TEXT("单场复盘 · 找到下一次进步的方向"), X + 22.f, Y + 18.f, ColCyan, TitleFont, 26);
+	DrawTextWrapped(FString::Printf(TEXT("%s · %s · %s"), *Session.FormattedTime,
+		Session.Transmission == ETransmissionType::Auto ? TEXT("C2 自动挡") : TEXT("C1 手动挡"), bPractice ? TEXT("引导练习") : TEXT("模拟考试")), X + 24.f, Y + 60.f, W - 48.f, 1, ColGray, Font);
+	DrawRoundedCard(Canvas, LX, CY, CW, CH, FLinearColor(0.08f, 0.10f, 0.15f), ColDarkGray);
+	DrawRoundedCard(Canvas, RX, CY, CW, CH, FLinearColor(0.08f, 0.10f, 0.15f), ColDarkGray);
+	DrawTextPixel(TEXT("本场结果"), LX + 18.f, CY + 14.f, ColCyan, Font);
+	DrawTextSlateLarge(bPractice ? TEXT("练习完成 · 未评级") : FString::Printf(TEXT("%d 分 · %s"), Session.FinalScore, Session.bPassed ? TEXT("合格") : TEXT("未合格")), LX + 20.f, CY + 44.f,
+		bPractice ? ColCyan : (Session.bPassed ? ColGreen : ColRed), TitleFont, 26);
+	DrawTextPixel(FString::Printf(TEXT("训练用时 %.1f 秒  ·  实际行驶 %.1f 米"), Session.DurationSeconds, Session.DistanceMeters), LX + 20.f, CY + 88.f, ColWhite, Font);
+	DrawTextWrapped(bPractice ? TEXT("引导练习不参与模拟考试合格率与最高成绩。") : Analysis.PerformanceRating, LX + 20.f, CY + 122.f, CW - 40.f, 2, ColGray, Font);
+	int32 Completed = 0;
+	int32 Skipped = 0;
+	for (const FZoneStatus& Zone : Session.ZoneStatuses)
+	{
+		if (Zone.State == 2) ++Completed;
+		else if (Zone.State == 3) ++Skipped;
+	}
+	DrawTextPixel(FString::Printf(TEXT("完成项目 %d / %d  ·  跳过 %d 项"), Completed, Session.ZoneStatuses.Num(), Skipped), LX + 20.f, CY + 168.f, ColGray, Font);
+	DrawTextWrapped(FString::Printf(TEXT("本场薄弱项：%s"), *Session.PrimaryWeaknessName), LX + 20.f, CY + 200.f, CW - 40.f, 2, ColYellow, Font);
+	DrawRoundedCard(Canvas, LX + 14.f, CY + 244.f, CW - 28.f, CH - 260.f, FLinearColor(0.12f, 0.15f, 0.21f), ColGold);
+	const FString Advice = Session.CoachAdvice.IsEmpty() ? UExamErrorAnalyzer::GetCoachAdviceForCategory(Session.PrimaryWeakness) : Session.CoachAdvice;
+	DrawTextWrapped(Advice, LX + 24.f, CY + 255.f, CW - 48.f, FMath::Max(1, FMath::FloorToInt((CH - 282.f) / 22.f)), ColWhite, Font);
+	const int32 Count = Session.Deductions.Num();
+	const int32 PageCount = FMath::Max(1, (Count + 5) / 6);
+	const int32 Page = FMath::Clamp(PC->GetHistoryDetailPage(), 0, PageCount - 1);
+	DrawTextPixel(FString::Printf(TEXT("全部扣分 · %d 条 · 第 %d / %d 页"), Count, Page + 1, PageCount), RX + 18.f, CY + 14.f, ColCyan, Font);
+	if (Count == 0)
+	{
+		DrawTextWrapped(bPractice ? TEXT("本场为引导练习，不执行考试扣分。可继续进行模拟考试，检验完整操作流程。") : TEXT("本场没有扣分记录。"), RX + 22.f, CY + 68.f, CW - 44.f, 4, bPractice ? ColGray : ColGreen, Font);
+	}
+	for (int32 Row = 0; Row < 6; ++Row)
+	{
+		const int32 Index = Page * 6 + Row;
+		if (!Session.Deductions.IsValidIndex(Index)) break;
+		const FDeduction& Ded = Session.Deductions[Index];
+		const float DY = CY + 44.f + Row * 62.f;
+		const FString Category = UExamErrorAnalyzer::GetCategoryDisplayName(UExamErrorAnalyzer::ClassifyDeductionReason(Ded.Reason));
+		DrawRoundedCard(Canvas, RX + 14.f, DY, CW - 28.f, 56.f, FLinearColor(0.11f, 0.13f, 0.19f), ColDarkGray);
+		DrawTextWrapped(FString::Printf(TEXT("%d. -%d分 · 开始后 %.1f秒 · %s"), Index + 1, Ded.Points, Ded.TimeSeconds, *Category), RX + 22.f, DY + 4.f, CW - 44.f, 1, ColYellow, Font, 18.f);
+		DrawTextWrapped(Ded.Reason, RX + 22.f, DY + 23.f, CW - 44.f, 2, ColWhite, Font, 16.f);
+	}
+	DrawTextWrapped(TEXT("PageUp / PageDown 翻扣分页    Enter / Esc 返回档案列表    F3 关闭并返回"), X + 24.f, Y + H - 42.f, W - 48.f, 1, ColYellow, Font);
 }
 
 void AKeMuSanHUD::DrawPauseOverlay(AKeMuSanGameMode* GM)
@@ -1076,7 +1294,7 @@ void AKeMuSanHUD::DrawPauseOverlay(AKeMuSanGameMode* GM)
 void AKeMuSanHUD::DrawKeyHelp(AExamController* EC, AKeMuSanPawn* Car)
 {
 	UFont* SmallFont = GEngine->GetMediumFont();
-	const FString KeyHints = TEXT("快捷键：W/S油门刹车  A/D转向  空格手刹  F安全带  B喇叭  M观察  V切视角  T校准后视镜  Esc暂停");
+	const FString KeyHints = TEXT("快捷键：W/S油门刹车  A/D转向  空格手刹  F安全带  B喇叭  M观察  V切视角  T校准后视镜  F3档案  Esc暂停");
 	DrawTextShadowedPixel(KeyHints, 20.f, Canvas->SizeY - 24.f, ColGray, SmallFont);
 }
 

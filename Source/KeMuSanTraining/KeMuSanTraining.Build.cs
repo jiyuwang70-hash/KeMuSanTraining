@@ -15,7 +15,9 @@ public class KeMuSanTraining : ModuleRules
 			"AudioExtensions",
 			"Slate",
 			"SlateCore",
-			"UMG"
+			"UMG",
+			"Json",
+			"JsonUtilities"
 		});
 	}
 }

@@ -6,6 +6,14 @@
 #include "GameFramework/PlayerInput.h"
 #include "Misc/CommandLine.h"
 #include "GenericPlatform/GenericPlatformMisc.h"
+#include "Misc/Paths.h"
+#include "HAL/PlatformTime.h"
+#include "Kismet/GameplayStatics.h"
+#include "HAL/FileManager.h"
+#include "HighResScreenshot.h"
+#include "UnrealClient.h"
+#include "ExamSaveGame.h"
+#include "ExamErrorAnalyzer.h"
 
 #include "KeMuSanGameMode.h"
 #include "KeMuSanPawn.h"
@@ -41,6 +49,33 @@ void AKeMuSanPlayerController::BeginPlay()
 		ExamStartTimer = 0.f;
 		UE_LOG(LogTemp, Log, TEXT("[KeMuSanExamStart] started exam start verification for target: %s"), *ExamStartTarget);
 	}
+
+	bArchiveTesting = FParse::Param(FCommandLine::Get(), TEXT("test-archive-analysis"));
+	bArchiveReloadTesting = FParse::Param(FCommandLine::Get(), TEXT("test-archive-reload"));
+	if (bArchiveTesting || bArchiveReloadTesting)
+	{
+		FParse::Value(FCommandLine::Get(), TEXT("archive-test-id="), ArchiveTestId);
+		FParse::Value(FCommandLine::Get(), TEXT("archive-test-shot-dir="), ArchiveTestShotDir);
+		FString Slot;
+		FString HistoryPath;
+		FParse::Value(FCommandLine::Get(), TEXT("exam-save-slot="), Slot);
+		FParse::Value(FCommandLine::Get(), TEXT("exam-history-path="), HistoryPath);
+		// An unattended verification must never write to a learner's real archive.
+		const bool bIsolated = Slot.StartsWith(TEXT("KeMuSanTest_")) && !HistoryPath.IsEmpty() &&
+			!FPaths::IsRelative(HistoryPath) && !ArchiveTestId.IsEmpty() &&
+			!ArchiveTestShotDir.IsEmpty() && !FPaths::IsRelative(ArchiveTestShotDir);
+		if (!bIsolated)
+		{
+			ArchiveTestResult(TEXT("isolated_parameters"), false);
+			return;
+		}
+		IFileManager::Get().MakeDirectory(*ArchiveTestShotDir, true);
+		UE_LOG(LogTemp, Log, TEXT("[KeMuSanArchiveTest] isolated_parameters PASS test_id=%s mode=%s"),
+			*ArchiveTestId, bArchiveReloadTesting ? TEXT("reload") : TEXT("save"));
+		ArchiveTestStep = 0;
+		ArchiveTestTimer = 0.f;
+	}
+
 }
 
 void AKeMuSanPlayerController::Tick(float DeltaSeconds)
@@ -54,6 +89,14 @@ void AKeMuSanPlayerController::Tick(float DeltaSeconds)
 	if (bExamStartTesting)
 	{
 		TickExamStartTest(DeltaSeconds);
+	}
+	if (bArchiveTesting)
+	{
+		TickArchiveTest(DeltaSeconds);
+	}
+	if (bArchiveReloadTesting)
+	{
+		TickArchiveReloadTest(DeltaSeconds);
 	}
 }
 
@@ -91,6 +134,19 @@ void AKeMuSanPlayerController::SetupInputComponent()
 	InputComponent->BindAction(TEXT("FreePractice"), IE_Pressed, this, &AKeMuSanPlayerController::FreePracticePressed);
 	InputComponent->BindAction(TEXT("ManualExam"), IE_Pressed, this, &AKeMuSanPlayerController::ManualExamPressed);
 	InputComponent->BindAction(TEXT("AutoExam"), IE_Pressed, this, &AKeMuSanPlayerController::AutoExamPressed);
+
+	FInputActionBinding& HistBinding = InputComponent->BindAction(TEXT("HistoryRecord"), IE_Pressed, this, &AKeMuSanPlayerController::HistoryRecordPressed);
+	HistBinding.bExecuteWhenPaused = true;
+	auto BindArchiveNavigation = [this](const TCHAR* Action, void (AKeMuSanPlayerController::*Handler)())
+	{
+		FInputActionBinding& Binding = InputComponent->BindAction(FName(Action), IE_Pressed, this, Handler);
+		Binding.bExecuteWhenPaused = true;
+	};
+	BindArchiveNavigation(TEXT("HistoryPrevious"), &AKeMuSanPlayerController::HistoryPreviousRecord);
+	BindArchiveNavigation(TEXT("HistoryNext"), &AKeMuSanPlayerController::HistoryNextRecord);
+	BindArchiveNavigation(TEXT("HistoryPreviousPage"), &AKeMuSanPlayerController::HistoryPreviousPage);
+	BindArchiveNavigation(TEXT("HistoryNextPage"), &AKeMuSanPlayerController::HistoryNextPage);
+
 
 	// 调镜与视角按键
 	InputComponent->BindAction(TEXT("CycleGearAuto"), IE_Pressed, this, &AKeMuSanPlayerController::CycleGearOrMirror);
@@ -134,6 +190,11 @@ void AKeMuSanPlayerController::HandleAnswerKey(FKey Key)
 
 void AKeMuSanPlayerController::GearKey(int32 GearIndex)
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	AExamController* EC = GetExamController();
 	if (EC && EC->GetPhase() == EExamPhase::LightTest)
 	{
@@ -156,6 +217,11 @@ void AKeMuSanPlayerController::GearKey(int32 GearIndex)
 
 void AKeMuSanPlayerController::AnswerKey(int32 Answer)
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	AExamController* EC = GetExamController();
 	if (!EC || EC->GetPhase() != EExamPhase::LightTest)
 	{
@@ -168,6 +234,22 @@ void AKeMuSanPlayerController::ConfirmPressed()
 {
 	AKeMuSanGameMode* GM = GetGameMode();
 	if (!GM) return;
+
+	AExamController* EC = GM->GetExamController();
+	if (EC && EC->IsShowingHistoryPanel())
+	{
+		const UExamSaveGame* Save = EC->GetSaveGame();
+		if (Save && Save->HistorySessions.Num() > 0)
+		{
+			bHistoryDetails = !bHistoryDetails;
+			HistoryDetailPage = 0;
+		}
+		else
+		{
+			CloseHistoryPanel();
+		}
+		return;
+	}
 
 	if (GM->bPaused)
 	{
@@ -182,7 +264,6 @@ void AKeMuSanPlayerController::ConfirmPressed()
 		return;
 	}
 
-	AExamController* EC = GM->GetExamController();
 	if (EC && EC->GetPhase() == EExamPhase::Finished)
 	{
 		GM->RestartGame();
@@ -191,6 +272,11 @@ void AKeMuSanPlayerController::ConfirmPressed()
 
 void AKeMuSanPlayerController::ManualExamPressed()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	AKeMuSanGameMode* GM = GetGameMode();
 	if (GM && !GM->IsGameStarted())
 	{
@@ -200,6 +286,11 @@ void AKeMuSanPlayerController::ManualExamPressed()
 
 void AKeMuSanPlayerController::AutoExamPressed()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	AKeMuSanGameMode* GM = GetGameMode();
 	if (GM && !GM->IsGameStarted())
 	{
@@ -207,8 +298,71 @@ void AKeMuSanPlayerController::AutoExamPressed()
 	}
 }
 
+void AKeMuSanPlayerController::HistoryRecordPressed()
+{
+	AKeMuSanGameMode* GM = GetGameMode();
+	AExamController* EC = GetExamController();
+	if (!GM || !EC) return;
+	if (EC->IsShowingHistoryPanel())
+	{
+		CloseHistoryPanel();
+		return;
+	}
+	EC->RefreshArchive();
+	HistorySelectedIndex = 0;
+	HistoryDetailPage = 0;
+	bHistoryDetails = false;
+	bHistoryIntroducedPause = GM->IsGameStarted() && !GM->bPaused;
+	if (bHistoryIntroducedPause) GM->TogglePause();
+	EC->SetShowingHistoryPanel(true);
+}
+
+void AKeMuSanPlayerController::CloseHistoryPanel()
+{
+	if (AExamController* EC = GetExamController()) EC->SetShowingHistoryPanel(false);
+	if (bHistoryIntroducedPause)
+	{
+		if (AKeMuSanGameMode* GM = GetGameMode())
+		{
+			if (GM->bPaused) GM->TogglePause();
+		}
+	}
+	bHistoryIntroducedPause = false;
+	bHistoryDetails = false;
+}
+
+void AKeMuSanPlayerController::MoveHistorySelection(int32 Delta)
+{
+	AExamController* EC = GetExamController();
+	if (!EC || !EC->IsShowingHistoryPanel()) return;
+	const UExamSaveGame* Save = EC->GetSaveGame();
+	if (Save && Save->HistorySessions.Num() > 0)
+	{
+		if (bHistoryDetails)
+		{
+			if (FMath::Abs(Delta) >= 5 && Save->HistorySessions.IsValidIndex(HistorySelectedIndex))
+			{
+				const int32 LastPage = FMath::Max(0, (Save->HistorySessions[HistorySelectedIndex].Deductions.Num() - 1) / 6);
+				HistoryDetailPage = FMath::Clamp(HistoryDetailPage + (Delta > 0 ? 1 : -1), 0, LastPage);
+			}
+			return;
+		}
+		HistorySelectedIndex = FMath::Clamp(HistorySelectedIndex + Delta, 0, Save->HistorySessions.Num() - 1);
+	}
+}
+
+void AKeMuSanPlayerController::HistoryPreviousRecord() { MoveHistorySelection(-1); }
+void AKeMuSanPlayerController::HistoryNextRecord() { MoveHistorySelection(1); }
+void AKeMuSanPlayerController::HistoryPreviousPage() { MoveHistorySelection(-5); }
+void AKeMuSanPlayerController::HistoryNextPage() { MoveHistorySelection(5); }
+
 void AKeMuSanPlayerController::CycleGearOrMirror()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		if (Car->IsMirrorAdjustMode())
@@ -228,6 +382,11 @@ void AKeMuSanPlayerController::CycleGearOrMirror()
 
 void AKeMuSanPlayerController::ToggleCameraPressed()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		Car->ToggleCameraView();
@@ -237,6 +396,11 @@ void AKeMuSanPlayerController::ToggleCameraPressed()
 
 void AKeMuSanPlayerController::ToggleMirrorModePressed()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		Car->ToggleMirrorAdjustMode();
@@ -246,6 +410,11 @@ void AKeMuSanPlayerController::ToggleMirrorModePressed()
 
 void AKeMuSanPlayerController::MirrorUp()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		if (Car->IsMirrorAdjustMode())
@@ -257,6 +426,11 @@ void AKeMuSanPlayerController::MirrorUp()
 
 void AKeMuSanPlayerController::MirrorDown()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		if (Car->IsMirrorAdjustMode())
@@ -268,6 +442,11 @@ void AKeMuSanPlayerController::MirrorDown()
 
 void AKeMuSanPlayerController::MirrorLeft()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		if (Car->IsMirrorAdjustMode())
@@ -279,6 +458,11 @@ void AKeMuSanPlayerController::MirrorLeft()
 
 void AKeMuSanPlayerController::MirrorRight()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanPawn* Car = GetTrainingPawn())
 	{
 		if (Car->IsMirrorAdjustMode())
@@ -290,6 +474,16 @@ void AKeMuSanPlayerController::MirrorRight()
 
 void AKeMuSanPlayerController::PausePressed()
 {
+	if (AExamController* EC = GetExamController())
+	{
+		if (EC->IsShowingHistoryPanel())
+		{
+			if (bHistoryDetails) bHistoryDetails = false;
+			else CloseHistoryPanel();
+			return;
+		}
+	}
+
 	if (AKeMuSanGameMode* GM = GetGameMode())
 	{
 		if (GM->IsGameStarted())
@@ -301,6 +495,11 @@ void AKeMuSanPlayerController::PausePressed()
 
 void AKeMuSanPlayerController::FreePracticePressed()
 {
+	if (AExamController* ArchiveEC = GetExamController())
+	{
+		if (ArchiveEC->IsShowingHistoryPanel()) return;
+	}
+
 	if (AKeMuSanGameMode* GM = GetGameMode())
 	{
 		if (!GM->IsGameStarted())
@@ -1032,4 +1231,292 @@ void AKeMuSanPlayerController::TickExamStartTest(float DeltaSeconds)
 	default:
 		break;
 	}
+}
+
+void AKeMuSanPlayerController::ArchiveTestResult(const TCHAR* Marker, bool bPassed)
+{
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSanArchiveTest] %s %s test_id=%s"), Marker, bPassed ? TEXT("PASS") : TEXT("FAIL"), *ArchiveTestId);
+	if (!bPassed)
+	{
+		bArchiveTesting = false;
+		bArchiveReloadTesting = false;
+		FGenericPlatformMisc::RequestExit(false);
+	}
+}
+
+void AKeMuSanPlayerController::RequestArchiveScreenshot(const TCHAR* Name)
+{
+	const FString Path = FPaths::Combine(ArchiveTestShotDir, FString(Name) + TEXT(".png"));
+	FScreenshotRequest::RequestScreenshot(Path, false, false);
+	UE_LOG(LogTemp, Log, TEXT("[KeMuSanArchiveTest] screenshot_requested name=%s test_id=%s"), Name, *ArchiveTestId);
+}
+
+void AKeMuSanPlayerController::TickArchiveTest(float DeltaSeconds)
+{
+	const double WallNow = FPlatformTime::Seconds();
+	ArchiveTestTimer += ArchivePreviousWallTime > 0.0 ? static_cast<float>(WallNow - ArchivePreviousWallTime) : 0.f;
+	ArchivePreviousWallTime = WallNow;
+	if (ArchiveTestTimer < 0.2f) return;
+	AKeMuSanGameMode* GM = GetGameMode();
+	AExamController* EC = GetExamController();
+	auto Next = [this]() { ++ArchiveTestStep; ArchiveTestTimer = 0.f; };
+	switch (ArchiveTestStep)
+	{
+	case 0:
+		ArchiveTestResult(TEXT("empty_isolated_archive"), EC && EC->GetSaveGame() && EC->GetSaveGame()->GetSessionCount() == 0);
+		if (!bArchiveTesting) return;
+		InputKey(FInputKeyParams(EKeys::F1, IE_Pressed, 1.0));
+		Next();
+		break;
+	case 1:
+		InputKey(FInputKeyParams(EKeys::F1, IE_Released, 0.0));
+		Next();
+		break;
+	case 2:
+		ArchiveTestResult(TEXT("native_f1_start"), GM && GM->IsGameStarted() && EC && EC->GetPhase() == EExamPhase::Prep && !EC->IsPractice());
+		if (!bArchiveTesting) return;
+		Next();
+		break;
+	case 3:
+		EC->AddDeduction(10, TEXT("变道前未观察后视镜"));
+		EC->AddDeduction(10, TEXT("变道转向灯开启不足3秒"));
+		EC->AddDeduction(10, TEXT("起步未松开驻车制动器"));
+		ArchiveTestResult(TEXT("three_category_deductions"), EC->GetScore() == 70 && EC->GetDeductions().Num() == 3);
+		if (!bArchiveTesting) return;
+		Next();
+		break;
+	case 4:
+	{
+		EC->FinishExam();
+		const FExamAnalysisResult& Analysis = EC->GetLastAnalysisResult();
+		const UExamSaveGame* Save = EC->GetSaveGame();
+		ArchiveTestResult(TEXT("native_finish_analysis"), EC->GetPhase() == EExamPhase::Finished &&
+			Analysis.ObservationDeductions == 10 && Analysis.LightingDeductions == 10 && Analysis.VehicleControlDeductions == 10 && Analysis.CoachAdvices.Num() > 0);
+		if (!bArchiveTesting) return;
+		ArchiveTestResult(TEXT("binary_and_json_saved"), Save && Save->GetSessionCount() == 1 && Save->bLastBinarySaveSucceeded && Save->bLastJsonExportSucceeded &&
+			FPaths::FileExists(UExamSaveGame::GetHistoryFilePath()));
+		if (!bArchiveTesting) return;
+		RequestArchiveScreenshot(TEXT("summary"));
+		Next();
+		ArchiveTestTimer = -0.5f;
+		break;
+	}
+	case 5:
+	{
+		ArchiveTestResult(TEXT("summary_screenshot_written"), FPaths::FileExists(FPaths::Combine(ArchiveTestShotDir, TEXT("summary.png"))));
+		if (!bArchiveTesting) return;
+		UExamSaveGame* Save = nullptr;
+		FExamSessionRecord Pass;
+		Pass.SessionId = ArchiveTestId + TEXT("_pass");
+		Pass.FormattedTime = FDateTime::Now().ToString(TEXT("%Y-%m-%d %H:%M:%S"));
+		Pass.PlayMode = EGamePlayMode::SimulatedExam;
+		Pass.Transmission = ETransmissionType::Auto;
+		Pass.FinalScore = 100;
+		Pass.bPassed = true;
+		Pass.ResultSummary = TEXT("合格（隔离测试数据）");
+		Pass.DurationSeconds = 42.f;
+		Pass.DistanceMeters = 333.f;
+		Pass.PrimaryWeaknessName = TEXT("暂无明显薄弱项");
+		Pass.CoachAdvice = TEXT("继续保持规范操作；本记录仅用于存档验证。 ");
+		ArchiveTestResult(TEXT("positive_exam_record"), UExamSaveGame::RecordAndSaveSession(Pass, Save));
+		if (!bArchiveTesting) return;
+
+		FExamSessionRecord Fatal = Pass;
+		Fatal.SessionId = ArchiveTestId + TEXT("_fatal");
+		Fatal.FinalScore = 0;
+		Fatal.bPassed = false;
+		Fatal.DurationSeconds = 30.f;
+		Fatal.DistanceMeters = 25.f;
+		Fatal.ResultSummary = TEXT("闯红灯不合格（隔离测试数据）");
+		FDeduction FatalDeduction;
+		FatalDeduction.Points = 100;
+		FatalDeduction.Reason = TEXT("闯红灯");
+		FatalDeduction.TimeSeconds = 5.5f;
+		Fatal.Deductions.Add(FatalDeduction);
+		const FExamAnalysisResult FatalAnalysis = UExamErrorAnalyzer::AnalyzeExamSession(0, true, Fatal.Deductions, 30.f, 25.f);
+		Fatal.PrimaryWeakness = FatalAnalysis.PrimaryWeakness;
+		Fatal.PrimaryWeaknessName = FatalAnalysis.PrimaryWeaknessName;
+		Fatal.CoachAdvice = UExamErrorAnalyzer::GetCoachAdviceForReason(FatalDeduction.Reason);
+		ArchiveTestResult(TEXT("fatal_violation_analysis"), FatalAnalysis.bHadFatalViolation && FatalAnalysis.RulesAndWayDeductions == 100 && FatalAnalysis.PrimaryWeakness == EErrorCategory::RulesAndWay);
+		if (!bArchiveTesting) return;
+		ArchiveTestResult(TEXT("fatal_exam_record"), UExamSaveGame::RecordAndSaveSession(Fatal, Save));
+		if (!bArchiveTesting) return;
+
+		FExamSessionRecord Practice = Pass;
+		Practice.SessionId = ArchiveTestId + TEXT("_practice");
+		Practice.PlayMode = EGamePlayMode::GuidedPractice;
+		Practice.bPassed = false;
+		Practice.ResultSummary = TEXT("练习完成（隔离测试数据）");
+		Practice.DurationSeconds = 60.f;
+		Practice.DistanceMeters = 75.f;
+		Practice.CoachAdvice = TEXT("练习不计算考试合格率；可使用模拟考试检验操作流程。 ");
+		ArchiveTestResult(TEXT("practice_record"), UExamSaveGame::RecordAndSaveSession(Practice, Save));
+		if (!bArchiveTesting) return;
+		for (int32 Index = 0; Index < 2; ++Index)
+		{
+			Practice.SessionId = FString::Printf(TEXT("%s_practice_extra_%d"), *ArchiveTestId, Index);
+			Practice.DurationSeconds = 61.f + Index;
+			Practice.DistanceMeters = 20.f + Index * 10.f;
+			ArchiveTestResult(TEXT("pagination_fixture_record"), UExamSaveGame::RecordAndSaveSession(Practice, Save));
+			if (!bArchiveTesting) return;
+		}
+		ArchiveTestResult(TEXT("practice_excluded_from_exam_statistics"), Save && Save->TotalExamsCount == 3 && Save->TotalPracticeCount == 3 && Save->PassedExamsCount == 1 &&
+			Save->BestScore == 100 && FMath::IsNearlyEqual(Save->BestDurationSeconds, 42.f) && Save->GetSessionCount() == 6 && Save->HistorySessions.Num() == 6);
+		if (!bArchiveTesting) return;
+		ArchiveTestResult(TEXT("duplicate_record_idempotent"), UExamSaveGame::RecordAndSaveSession(Fatal, Save) && Save && Save->bLastSessionAlreadyRecorded &&
+			Save->GetSessionCount() == 6 && Save->HistorySessions.Num() == 6 && Save->ErrorFrequencyMap.FindRef(TEXT("闯红灯")) == 1);
+		if (!bArchiveTesting) return;
+		ArchiveTestResult(TEXT("topn_zero_and_negative"), Save->GetTopFrequentErrors(0).IsEmpty() && Save->GetTopFrequentErrors(-1).IsEmpty());
+		if (!bArchiveTesting) return;
+		FDeduction Other;
+		Other.Points = 10;
+		Other.Reason = TEXT("测试未归类错误");
+		TArray<FDeduction> OtherDeductions;
+		OtherDeductions.Add(Other);
+		const FExamAnalysisResult OtherAnalysis = UExamErrorAnalyzer::AnalyzeExamSession(90, false, OtherDeductions, 5.f, 0.f);
+		ArchiveTestResult(TEXT("other_category_reports_weakness"), OtherAnalysis.OtherDeductions == 10 && OtherAnalysis.PrimaryWeakness == EErrorCategory::Other &&
+			OtherAnalysis.PrimaryWeaknessName == TEXT("其他综合类"));
+		if (!bArchiveTesting) return;
+
+		// Failure-path assertions use only this run's isolated files, and restore its .sav bytes.
+		ArchiveTestResult(TEXT("json_unwritable_target_rejected"), !UExamSaveGame::ExportToJsonFile(Save, ArchiveTestShotDir));
+		if (!bArchiveTesting) return;
+		TArray<uint8> OriginalBytes;
+		const FString Slot = UExamSaveGame::GetDefaultSlotName();
+		const bool bOriginalRead = UGameplayStatics::LoadDataFromSlot(OriginalBytes, Slot, 0);
+		TArray<uint8> InvalidBytes;
+		InvalidBytes.Init(0, 4);
+		const bool bCorruptWritten = bOriginalRead && UGameplayStatics::SaveDataToSlot(InvalidBytes, Slot, 0);
+		UExamSaveGame* Rejected = bCorruptWritten ? UExamSaveGame::LoadOrCreateSaveGame() : Save;
+		UExamSaveGame* RecordRejected = nullptr;
+		const bool bRecordFailed = bCorruptWritten && !UExamSaveGame::RecordAndSaveSession(Fatal, RecordRejected);
+		TArray<uint8> UnchangedBytes;
+		const bool bStillCorrupt = bCorruptWritten && UGameplayStatics::LoadDataFromSlot(UnchangedBytes, Slot, 0) && UnchangedBytes == InvalidBytes;
+		const bool bRestored = bOriginalRead && UGameplayStatics::SaveDataToSlot(OriginalBytes, Slot, 0);
+		ArchiveTestResult(TEXT("corrupt_slot_refused_and_restored"), bOriginalRead && bCorruptWritten && Rejected == nullptr && bRecordFailed && bStillCorrupt && bRestored);
+		if (!bArchiveTesting) return;
+		ArchiveTestResult(TEXT("save_complete"), true);
+		bArchiveTesting = false;
+		FGenericPlatformMisc::RequestExit(false);
+		break;
+	}
+	default: break;
+	}
+}
+
+void AKeMuSanPlayerController::TickArchiveReloadTest(float DeltaSeconds)
+{
+	const double WallNow = FPlatformTime::Seconds();
+	ArchiveTestTimer += ArchivePreviousWallTime > 0.0 ? static_cast<float>(WallNow - ArchivePreviousWallTime) : 0.f;
+	ArchivePreviousWallTime = WallNow;
+	AKeMuSanGameMode* GM = GetGameMode();
+	AExamController* EC = GetExamController();
+	if (ArchiveTestStep == 0)
+	{
+		if (ArchiveTestTimer < 0.3f) return;
+		const UExamSaveGame* Save = EC ? EC->GetSaveGame() : nullptr;
+		const bool bReloaded = Save && Save->GetSessionCount() == 6 && Save->TotalExamsCount == 3 && Save->TotalPracticeCount == 3 &&
+			Save->PassedExamsCount == 1 && Save->BestScore == 100 && FMath::IsNearlyEqual(Save->BestDurationSeconds, 42.f) && Save->HistorySessions.Num() == 6 &&
+			Save->HistorySessions[0].SessionId == ArchiveTestId + TEXT("_practice_extra_1") &&
+			Save->HistorySessions[3].SessionId == ArchiveTestId + TEXT("_fatal") && Save->HistorySessions[3].Deductions.Num() == 1 && Save->HistorySessions[3].Deductions[0].Points == 100 &&
+			Save->HistorySessions[4].SessionId == ArchiveTestId + TEXT("_pass") && Save->HistorySessions[4].bPassed &&
+			Save->HistorySessions[5].FinalScore == 70 && Save->HistorySessions[5].Deductions.Num() == 3 &&
+			Save->ErrorFrequencyMap.FindRef(TEXT("闯红灯")) == 1;
+		ArchiveTestResult(TEXT("cross_process_sav_reload"), bReloaded);
+		if (!bArchiveReloadTesting) return;
+		++ArchiveTestStep;
+		ArchiveTestTimer = 0.f;
+		return;
+	}
+
+	// Three ticks per native key: press, release, then check the resulting state.
+	const FKey Keys[] = { EKeys::F3, EKeys::PageDown, EKeys::Enter, EKeys::Enter, EKeys::Escape,
+		EKeys::F1, EKeys::Escape, EKeys::F3, EKeys::F3, EKeys::Escape, EKeys::F3, EKeys::F3 };
+	const int32 Action = (ArchiveTestStep - 1) / 3;
+	const int32 SubStep = (ArchiveTestStep - 1) % 3;
+	if (Action >= UE_ARRAY_COUNT(Keys))
+	{
+		ArchiveTestResult(TEXT("reload_complete"), true);
+		bArchiveReloadTesting = false;
+		FGenericPlatformMisc::RequestExit(false);
+		return;
+	}
+	if (SubStep == 0)
+	{
+		if (ArchiveTestTimer < 0.2f) return;
+		if (Action == 11)
+		{
+			const AKeMuSanPawn* Car = GetTrainingPawn();
+			ArchiveTestResult(TEXT("archive_pauses_simulation_clock_and_car"), EC && GM && GM->bPaused && EC->IsShowingHistoryPanel() &&
+				FMath::IsNearlyEqual(GetWorld()->GetTimeSeconds(), ArchivePauseWorldTime, 0.001f) && Car && Car->GetActorLocation().Equals(ArchivePauseLocation, 0.01f));
+			if (!bArchiveReloadTesting) return;
+		}
+		InputKey(FInputKeyParams(Keys[Action], IE_Pressed, 1.0));
+		++ArchiveTestStep;
+		ArchiveTestTimer = 0.f;
+		return;
+	}
+	if (SubStep == 1)
+	{
+		if (ArchiveTestTimer < 0.15f) return;
+		InputKey(FInputKeyParams(Keys[Action], IE_Released, 0.0));
+		++ArchiveTestStep;
+		ArchiveTestTimer = 0.f;
+		return;
+	}
+	if (ArchiveTestTimer < 0.3f) return;
+	if (!GM || !EC)
+	{
+		ArchiveTestResult(TEXT("reload_controller_present"), false);
+		return;
+	}
+	switch (Action)
+	{
+	case 0:
+		ArchiveTestResult(TEXT("menu_f3_visible"), EC->IsShowingHistoryPanel() && !GM->IsGameStarted() && !GM->bPaused);
+		if (bArchiveReloadTesting) RequestArchiveScreenshot(TEXT("history"));
+		break;
+	case 1:
+		ArchiveTestResult(TEXT("history_second_page_selects_sixth"), EC->IsShowingHistoryPanel() && GetHistoryPage() == 1 && HistorySelectedIndex == 5 &&
+			FPaths::FileExists(FPaths::Combine(ArchiveTestShotDir, TEXT("history.png"))));
+		break;
+	case 2:
+		ArchiveTestResult(TEXT("native_enter_opens_details"), EC->IsShowingHistoryPanel() && bHistoryDetails && HistorySelectedIndex == 5);
+		if (bArchiveReloadTesting) RequestArchiveScreenshot(TEXT("details"));
+		break;
+	case 3:
+		ArchiveTestResult(TEXT("native_enter_returns_to_list"), EC->IsShowingHistoryPanel() && !bHistoryDetails &&
+			FPaths::FileExists(FPaths::Combine(ArchiveTestShotDir, TEXT("details.png"))));
+		break;
+	case 4:
+		ArchiveTestResult(TEXT("native_esc_closes_archive"), !EC->IsShowingHistoryPanel() && !GM->bPaused && !GM->IsGameStarted());
+		break;
+	case 5:
+		ArchiveTestResult(TEXT("native_f1_after_archive"), GM->IsGameStarted() && EC->GetPhase() == EExamPhase::Prep && !EC->IsShowingHistoryPanel());
+		break;
+	case 6:
+		ArchiveTestResult(TEXT("native_esc_pauses_before_archive"), GM->bPaused);
+		break;
+	case 7:
+		ArchiveTestResult(TEXT("f3_opens_over_existing_pause"), GM->bPaused && EC->IsShowingHistoryPanel() && !bHistoryIntroducedPause);
+		break;
+	case 8:
+		ArchiveTestResult(TEXT("closing_preserves_existing_pause"), GM->bPaused && !EC->IsShowingHistoryPanel());
+		break;
+	case 9:
+		ArchiveTestResult(TEXT("native_esc_resumes_existing_pause"), !GM->bPaused);
+		break;
+	case 10:
+		ArchiveTestResult(TEXT("f3_introduces_own_pause"), GM->bPaused && EC->IsShowingHistoryPanel() && bHistoryIntroducedPause);
+		ArchivePauseWorldTime = GetWorld()->GetTimeSeconds();
+		if (const AKeMuSanPawn* Car = GetTrainingPawn()) ArchivePauseLocation = Car->GetActorLocation();
+		break;
+	case 11:
+		ArchiveTestResult(TEXT("closing_restores_running_state"), !GM->bPaused && !EC->IsShowingHistoryPanel());
+		break;
+	default: break;
+	}
+	if (!bArchiveReloadTesting) return;
+	++ArchiveTestStep;
+	ArchiveTestTimer = (Action == 0 || Action == 2) ? -0.5f : 0.f;
 }

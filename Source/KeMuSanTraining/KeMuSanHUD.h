@@ -31,6 +31,7 @@ protected:
 	void DrawTextShadowed(const FString& Text, float X, float Y, float Scale, const FLinearColor& Color, const UFont* Font);
 	void DrawTextSlateLarge(const FString& Text, float X, float Y, const FLinearColor& Color, const UFont* Font, int32 PointSize = 26);
 	float MeasureTextSlate(const FString& Text, const UFont* Font, int32 PointSize = 26);
+	void DrawTextWrapped(const FString& Text, float X, float Y, float MaxWidth, int32 MaxLines, const FLinearColor& Color, const UFont* Font, float LineHeight = 22.f);
 
 	// 核心界面子系统
 	void DrawMenu();
@@ -45,6 +46,8 @@ protected:
 	void DrawPullOverRadar(AExamController* EC);
 	void DrawLightTestPanel(AExamController* EC);
 	void DrawResultPanel(AExamController* EC, AKeMuSanGameMode* GM);
+	void DrawHistoryAnalysisPanel(AExamController* EC);
+	void DrawHistorySessionDetails(AExamController* EC);
 	void DrawPauseOverlay(AKeMuSanGameMode* GM);
 	void DrawMiniMap(AExamController* EC, AKeMuSanPawn* Car);
 	void DrawKeyHelp(AExamController* EC, AKeMuSanPawn* Car);

@@ -1,7 +1,7 @@
 // 科目三考试路线几何布局与路线投影工具
 // 新版：大型城市道路网，东段直行 -> 转角路口右转 -> 北段 ->
 // 转角路口右转 -> 西段 -> U-turn掉头返回 -> 靠边停车
-// U-turn 由两个 90° 左转弧 + 直连段组成，自然衔接返回车道
+// U-turn 由两个 90° 左转弧 + 直连段组成，衔接北侧独立返回车道
 #pragma once
 
 #include "CoreMinimal.h"
@@ -30,30 +30,28 @@ namespace RoadLayout
 	inline const FVector ArcCEnd(506.f, 320.f, 0.f);
 	inline const FVector WestToUTurn(382.f, 320.f, 0.f);   // 西段止于 U-turn 入口
 
-	// ---- U-turn geometry (two 90° left turns connected by a 45.5m straight) ----
-	// Arc 1: (382, 320) heading -X → (361, 299) heading -Y, center (382, 299), r=21
-	// Straight: (361, 299) → (361, 344.5), heading -Y
-	// Arc 2: (361, 344.5) heading -Y → (382, 323.5) heading +X, center (382, 344.5), r=21
-	inline const FVector UTurnArc1Center(382.f, 299.f, 0.f);
-	inline const FVector UTurnMidA(361.f, 299.f, 0.f);       // Arc1 end = straight start
-	inline const FVector UTurnMidB(361.f, 344.5f, 0.f);      // Straight end = Arc2 start
-	inline const FVector UTurnArc2Center(382.f, 344.5f, 0.f);
-
-	// 返回段（掉头后朝 +X）：y=323.5，x 从 382 到 480
-	inline const FVector ReturnStart(382.f, 323.5f, 0.f);
-	inline const FVector ReturnEnd(480.f, 323.5f, 0.f);
+	// ---- 掉头：两段顺时针 90° 左转，中间向北直行 ----
+	// 朝西进入、朝北连接、朝东离开；三处接点的位置和切线均连续。
+	constexpr float UTurnRadius = 12.f;
+	constexpr float UTurnStraightLength = 10.f;
+	constexpr float ReturnCenterY = 320.f + 2.f * UTurnRadius + UTurnStraightLength;
+	inline const FVector UTurnArc1Center(WestToUTurn.X, WestToUTurn.Y + UTurnRadius, 0.f);
+	inline const FVector UTurnMidA(WestToUTurn.X - UTurnRadius, UTurnArc1Center.Y, 0.f);
+	inline const FVector UTurnMidB(UTurnMidA.X, UTurnMidA.Y + UTurnStraightLength, 0.f);
+	inline const FVector UTurnArc2Center(WestToUTurn.X, UTurnMidB.Y, 0.f);
+	inline const FVector ReturnStart(WestToUTurn.X, ReturnCenterY, 0.f);
+	inline const FVector ReturnEnd(500.f, ReturnCenterY, 0.f);
+	// 在西段北侧的路缘石/人行道上保留掉头入口开口。
+	inline const float UTurnClearanceMinX = UTurnMidA.X - CurbDistance - 2.f;
+	inline const float UTurnClearanceMaxX = WestToUTurn.X + CurbDistance + 2.f;
 
 	// ---- 里程常量（由折线几何计算，单位米）----
 	// 东段: 0 .. 526
 	// 弧 B: 526 .. 548
 	// 北段: 548 .. 840
 	// 弧 C: 840 .. 862
-	// 西段 (to U-turn): 862 .. 980
-	// U-turn Arc1: 980 .. 1013
-	// U-turn Straight: 1013 .. 1058
-	// U-turn Arc2: 1058 .. 1091
-	// (Arc2 end = ReturnStart = 1091)
-	// Return straight: 1091 .. 1189
+	// 985.982m 起掉头，两个 18.850m 弧及 10m 直段后进入返回车道；
+	// 精确里程从同一组几何参数计算，避免手填整数里程与采样轨迹错位。
 	constexpr float S_Start = 20.f;           // 起点线
 	constexpr float S_ReadyEnd = 34.f;        // 起步完成
 	constexpr float StraightStartS = 42.f;    // 直线行驶
@@ -79,16 +77,17 @@ namespace RoadLayout
 	constexpr float CornerCEndS = 868.f;
 	constexpr float GearStartS = 886.f;       // 加减挡操作
 	constexpr float GearEndS = 956.f;
-	constexpr float UTurnEntryS = 980.f;      // U-turn Arc1 起点
-	constexpr float UTurnArc1EndS = 1013.f;   // U-turn Straight 起点
-	constexpr float UTurnStraightEndS = 1058.f; // U-turn Arc2 起点
-	constexpr float UTurnCompleteS = 1091.f;  // U-turn Arc2 终点 = 返回段起点
-	constexpr float ReturnStartS = 1091.f;    // Same as UTurnCompleteS
-	constexpr float PullOverEnterS = 1124.f;  // 进入靠边停车阶段
-	constexpr float PullOverMinS = 1132.f;    // 允许停车的区域
-	constexpr float PullOverMaxS = 1184.f;
-	constexpr float PullOverFailS = 1190.f;   // 驶过则判未按规定停车
-	constexpr float RoadEndS = 1195.f;        // 返回段尽头（未停车警告）
+	inline const float UTurnEntryS = FVector::Dist(TrackStart, ArcBStart) +
+		PI * CornerRadius + FVector::Dist(ArcBEnd, ArcCStart) + FVector::Dist(ArcCEnd, WestToUTurn);
+	inline const float UTurnArc1EndS = UTurnEntryS + 0.5f * PI * UTurnRadius;
+	inline const float UTurnStraightEndS = UTurnArc1EndS + UTurnStraightLength;
+	inline const float UTurnCompleteS = UTurnStraightEndS + 0.5f * PI * UTurnRadius;
+	inline const float ReturnStartS = UTurnCompleteS;
+	inline const float PullOverEnterS = ReturnStartS + 33.f;
+	inline const float PullOverMinS = ReturnStartS + 41.f;
+	inline const float PullOverMaxS = ReturnStartS + 93.f;
+	inline const float PullOverFailS = ReturnStartS + 99.f;
+	inline const float RoadEndS = ReturnStartS + 104.f;
 
 	// ---- 世界坐标锚点（供场景搭建 / 交通流使用）----
 	constexpr float RoadSurfaceZ = 0.061f;                              // 路面顶高（米制，对应6.1cm），供车辆/交通对象贴地
@@ -114,8 +113,6 @@ namespace RoadLayout
 	constexpr float ReturnCurbLateral = RoadHalfWidth;     // 3.5
 	constexpr float PullOverGapBase = ReturnCurbLateral - CarHalfWidth; // 2.6
 
-	// 返回段横向中心线位置（用于投影判断）
-	constexpr float ReturnCenterY = 323.5f;
 
 	// ---- 横向方向：lateral = (P - C) · D，D = (-T.Y, T.X) ----
 	// 正值表示沿行驶方向的右侧车道
@@ -142,6 +139,8 @@ public:
 	{
 		using namespace RoadLayout;
 		Samples.Reset();
+		NextS = 0.f;
+		MainLength = 0.f;
 		const float Step = 1.0f;
 
 		auto AddSeg = [&](const FVector& From, const FVector& To, bool bIsReturn = false)
@@ -158,23 +157,28 @@ public:
 			NextS += Len;
 		};
 
-		auto AddArc = [&](const FVector& Center, const FVector& From, const FVector& To, bool bIsReturn = false)
+		auto AddArc = [&](const FVector& Center, const FVector& From, const FVector& To, bool bIsReturn = false, bool bClockwise = false)
 		{
 			const float A0 = FMath::Atan2(From.Y - Center.Y, From.X - Center.X);
 			float A1 = FMath::Atan2(To.Y - Center.Y, To.X - Center.X);
 			float DA = FMath::UnwindDegrees(FMath::RadiansToDegrees(A1 - A0));
-			if (DA < 0.f)
+			if (bClockwise && DA > 0.f)
+			{
+				DA -= 360.f;
+			}
+			else if (!bClockwise && DA < 0.f)
 			{
 				DA += 360.f;
 			}
 			const float Rad = FVector::Dist(Center, From);
-			const float Len = FMath::DegreesToRadians(DA) * Rad;
+			const float Len = FMath::Abs(FMath::DegreesToRadians(DA)) * Rad;
 			const int32 N = FMath::Max(2, FMath::RoundToInt(Len / Step));
 			for (int32 i = 0; i < N; ++i)
 			{
 				const float A = A0 + FMath::DegreesToRadians(DA) * (static_cast<float>(i) / N);
 				FVector P(Center.X + Rad * FMath::Cos(A), Center.Y + Rad * FMath::Sin(A), 0.f);
-				FVector T(-FMath::Sin(A), FMath::Cos(A), 0.f); // ccw tangent
+				const float Direction = bClockwise ? -1.f : 1.f;
+				FVector T(-FMath::Sin(A) * Direction, FMath::Cos(A) * Direction, 0.f);
 				Samples.Add({ P, T, NextS + Len * i / N, bIsReturn });
 			}
 			NextS += Len;
@@ -189,10 +193,10 @@ public:
 
 		MainLength = NextS;  // Main line ends at U-turn entry
 
-		// U-turn: Arc1 → Straight → Arc2 (all bReturn=true after the first arc)
-		AddArc(UTurnArc1Center, WestToUTurn, UTurnMidA, true);
-		AddSeg(UTurnMidA, UTurnMidB, true);
-		AddArc(UTurnArc2Center, UTurnMidB, ReturnStart, true);
+		// 掉头段仍属于掉头过程；只有最终东行直段才是返回车道。
+		AddArc(UTurnArc1Center, WestToUTurn, UTurnMidA, false, true);
+		AddSeg(UTurnMidA, UTurnMidB);
+		AddArc(UTurnArc2Center, UTurnMidB, ReturnStart, false, true);
 
 		// Return straight
 		AddSeg(ReturnStart, ReturnEnd, true);
@@ -303,9 +307,10 @@ public:
 			}
 		}
 
-		// Near U-turn zone (S 960-1120): prefer aligned sample even with larger distance
+		// 掉头区提高方向权重，边界使用同源几何里程。
 		const bool bNearUTurn = (Samples.IsValidIndex(AnyIdx) &&
-			Samples[AnyIdx].S > 960.f && Samples[AnyIdx].S < 1120.f);
+			Samples[AnyIdx].S > RoadLayout::UTurnEntryS - 20.f &&
+			Samples[AnyIdx].S < RoadLayout::ReturnStartS + 25.f);
 		const float AlignTolerance = bNearUTurn ? 400.f : 25.f;  // 20m vs 5m
 
 		int32 UseIdx = AnyIdx;

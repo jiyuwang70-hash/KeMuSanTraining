@@ -53,6 +53,9 @@ if %ERRORLEVEL% NEQ 0 ( echo [错误] git add .agents/rules/project-quality.md �
 git add *.bat
 if %ERRORLEVEL% NEQ 0 ( echo [错误] git add *.bat 失败！ & pause & exit /b %ERRORLEVEL% )
 
+git add docs/
+if %ERRORLEVEL% NEQ 0 ( echo [错误] git add docs/ 失败！ & pause & exit /b %ERRORLEVEL% )
+
 git add README.md
 if %ERRORLEVEL% NEQ 0 ( echo [错误] git add README.md 失败！ & pause & exit /b %ERRORLEVEL% )
 
@@ -73,8 +76,8 @@ if %DIFF_EXIT% NEQ 1 (
 )
 
 set "COMMIT_MSG="
-set /p COMMIT_MSG="请输入提交信息 (直接回车默认: feat: complete driving journey, optical mirrors, and quality rules): "
-if "%COMMIT_MSG%"=="" set "COMMIT_MSG=feat: complete driving journey, optical mirrors, and quality rules"
+set /p COMMIT_MSG="请输入提交信息 (直接回车默认: feat: improve driving training and session review): "
+if "%COMMIT_MSG%"=="" set "COMMIT_MSG=feat: improve driving training and session review"
 
 git commit -m "%COMMIT_MSG%"
 if %ERRORLEVEL% NEQ 0 (

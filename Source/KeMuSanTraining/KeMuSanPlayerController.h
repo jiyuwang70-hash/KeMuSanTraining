@@ -38,6 +38,16 @@ public:
 	void FreePracticePressed();
 	void ManualExamPressed();   // F1
 	void AutoExamPressed();     // F2
+	void HistoryRecordPressed();// F3 (学员档案与错题分析)
+	void CloseHistoryPanel();
+	void HistoryPreviousRecord();
+	void HistoryNextRecord();
+	void HistoryPreviousPage();
+	void HistoryNextPage();
+	int32 GetHistorySelectedIndex() const { return HistorySelectedIndex; }
+	int32 GetHistoryPage() const { return HistorySelectedIndex / 5; }
+	bool IsShowingHistoryDetails() const { return bHistoryDetails; }
+	int32 GetHistoryDetailPage() const { return HistoryDetailPage; }
 	void CycleGearOrMirror();   // Tab (调镜模式下切换镜面；自动挡模式下切换P/R/N/D)
 	void ToggleCameraPressed(); // V (切换追尾视角与座舱视点)
 	void ToggleMirrorModePressed(); // T (开启/关闭后视镜校准模式)
@@ -69,4 +79,24 @@ protected:
 	int32 ExamStartStep = 0;
 	float ExamStartTimer = 0.f;
 	void TickExamStartTest(float DeltaSeconds);
+
+	// 存档与错题分析测试驱动（-test-archive-analysis 真实按键注入）
+	bool bArchiveTesting = false;
+	bool bArchiveReloadTesting = false;
+	int32 ArchiveTestStep = 0;
+	float ArchiveTestTimer = 0.f;
+	FString ArchiveTestId;
+	FString ArchiveTestShotDir;
+	double ArchivePreviousWallTime = 0.0;
+	float ArchivePauseWorldTime = 0.f;
+	FVector ArchivePauseLocation = FVector::ZeroVector;
+	void TickArchiveTest(float DeltaSeconds);
+	void TickArchiveReloadTest(float DeltaSeconds);
+	void ArchiveTestResult(const TCHAR* Marker, bool bPassed);
+	void RequestArchiveScreenshot(const TCHAR* Name);
+	bool bHistoryIntroducedPause = false;
+	bool bHistoryDetails = false;
+	int32 HistorySelectedIndex = 0;
+	int32 HistoryDetailPage = 0;
+	void MoveHistorySelection(int32 Delta);
 };

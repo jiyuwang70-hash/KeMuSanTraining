@@ -234,6 +234,10 @@ void AKeMuSanHUD::DrawHUD()
 		DrawStepGuide(EC, Car);
 	}
 
+ if(Car && Car->IsOverturned())
+ {
+  DrawTextWrapped(TEXT("车辆已侧翻：按 F1 重新开始，恢复车身与悬挂"),420.f,205.f,440.f,2,FLinearColor(1.f,.3f,.15f),GEngine->GetMediumFont(),24.f);
+ }
  if(Car && EC->IsPractice() && GetWorld()->GetTimeSeconds()-Car->GetLastVehicleHitTime()<2.f)
  {
   DrawTextWrapped(TEXT("发生车辆碰撞：松开油门，刹停后挂 R 挡倒车脱离"),420.f,235.f,440.f,2,FLinearColor(1.f,.55f,.2f),GEngine->GetMediumFont(),24.f);

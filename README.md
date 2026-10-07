@@ -1,6 +1,6 @@
 # 科目三路考模拟（KeMuSan Road Test Simulator）
 
-**2026-10-07 更新：** 主路拓宽到10米，增加独立沥青停车带与三轴重卡，车辆改为UE内置Chaos动态刚体，支持碰撞推移、偏航和质量差响应。[物理与道路验收](docs/physics-verification.md)。
+**2026-10-07 更新：** 在10米宽考道与三轴重卡基础上，增加碰撞后的永久局部凹陷、四轮/六轮悬挂、侧倾、轮载转移与重卡高速急转翻覆。[本轮形变与翻覆验收](docs/damage-rollover-verification.md)。
 
 ![加宽道路、停车带和重卡](docs/screenshots/12_wide_road_heavy_truck.png)
 
@@ -122,9 +122,15 @@ KeMuSanTraining/
 
 考试车1400kg，普通社会车1500kg，重卡14000kg。车辆使用Chaos动态碰撞体、摩擦/恢复系数、连续碰撞检测和物理子步；油门、刹车及转向施加力/力矩，AI从实际位置更新路线进度，不用每帧瞬移覆盖撞击反应。练习中可挂R挡倒车脱离，考试碰撞判定来自实际接触事件。
 
-当前为平整考道的水平位移与偏航物理，锁定高度、俯仰和侧倾；尚无翻车、完整悬挂或车身钣金变形模拟。参考[UE5 Chaos异步悬挂示例](https://github.com/fgrenoville/Async-Physics-Suspension)的刚体与力驱动架构，并参考[Jolt车辆示例](https://github.com/jrouwe/JoltPhysics/tree/master/Samples/Tests/Vehicle)的测试方向；项目实际求解由UE自带Chaos完成，未复制这两个仓库的实现，也未新增Jolt运行时依赖。
+现已开放高度、俯仰和侧倾：射线悬挂在轮点施加弹簧与阻尼力，轮胎力按轮载和摩擦上限作用于地面接触点。低速转弯稳定，高速会侧倾/侧滑；高重心重卡可翻覆。车身、保险杠、引擎盖和货箱采用细分程序化面板，撞击冲量驱动累计凹陷，重新开局或车流回收时修复。翻覆后停止正常驱动力并显示中文重开提示。
 
-`run_vehicle_physics_test.ps1` 在真实游戏进程中验证六类碰撞（普通车追尾、重卡质量差、偏置侧撞、对撞、倒车接触和高速CCD），输出实际速度、转速、位移与质量。碰撞夹具赋初速度，原生驾驶输入另行验证；不代表完整人工路考已通过。
+参考 [Bullet RaycastVehicle](https://github.com/bulletphysics/bullet3/blob/master/src/BulletDynamics/Vehicle/btRaycastVehicle.cpp) 的轮点悬挂、摩擦限制和翻滚力臂，以及 [Mesh Deformation Toolkit](https://github.com/normalvector/ue4_mesh_deformation_toolkit) 的加权顶点形变/法线更新思路，独立编写了适配当前程序化车型的实现；未导入旧UE4插件或第二套物理引擎。当前为刚体底盘加表面塑性凹陷，碰撞包络保持刚性，尚未实现逐片钣金的软体求解、零件脱落和材料撕裂。[实现范围与实机证据](docs/damage-rollover-verification.md)。
+
+`run_vehicle_physics_test.ps1` 在真实游戏进程中验证六类碰撞（普通车追尾、重卡质量差、偏置侧撞、对撞、倒车接触和高速CCD），并检查玩家车凹陷、修复、车流回收、悬挂转弯与重卡翻覆、车顶落地。碰撞和高速转弯夹具赋一次初速度，后续由Chaos求解，原生驾驶输入另行验证；不代表完整人工路考已通过。
+
+| 真实撞击后的车身凹陷 | 重卡高速急转翻覆 |
+| :---: | :---: |
+| ![碰撞后的考试车，移开测试障碍物便于观察](docs/screenshots/14_collision_dent.png) | ![重卡急转后翻覆](docs/screenshots/15_corner_rollover.png) |
 
 ### 1. 文字提示与声音反馈
 - **提示机制**：采用全中文 HUD 实时文字提示与程序化高保真合成提示音相结合，清晰指示考点与操作要点（系统当前未包含真人中文 TTS 语音库）。

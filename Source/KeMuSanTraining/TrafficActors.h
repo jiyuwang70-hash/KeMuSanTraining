@@ -7,10 +7,12 @@
 
 class UStaticMeshComponent;
 class UBoxComponent;
+class UVehicleDynamicsComponent;
+class UVehicleDamageComponent;
 class UMaterialInstanceDynamic;
 class FRouteTrack;
 
-// 简单 AI 车：由 TrafficManager 驱动位置与速度（用于会车 / 超车 / 环境车流）
+// 动态 AI 车：由 TrafficManager 提供路线目标，以力驱动跟随（用于会车 / 超车 / 环境车流）
 UCLASS()
 class KEMUSANTRAINING_API AAICar : public AActor
 {
@@ -26,19 +28,25 @@ public:
 	FVector GetCarLocation() const { return GetActorLocation(); }
 	float GetHeadingDeg() const { return GetActorRotation().Yaw; }
 
-	// 车流模式接口（位置由管理器每帧写入）
+	// 车流模式接口（首次激活摆位，后续更新目标位置）
 	void Activate(float InSpeedKmh);
 	void Deactivate();
 	void SetPose(const FVector& Pos, float YawDeg);
  void SetSpeedMs(float InSpeed) { SpeedMs = InSpeed; }
  UBoxComponent* GetPhysicsBody() const { return PhysicsBody; }
  void MakeHeavyTruck();
+ UVehicleDamageComponent* GetDamage() const { return Damage; }
+ UVehicleDynamicsComponent* GetDynamics() const { return Dynamics; }
+ int32 GetVehicleContacts() const { return VehicleContacts; }
  float GetHalfLength() const { return bHeavyTruck?4.5f:2.3f; }
  float GetHalfWidth() const { return bHeavyTruck?1.25f:.98f; }
  bool IsHeavyTruck() const { return bHeavyTruck; }
 private:
  UPROPERTY() UBoxComponent* PhysicsBody=nullptr;
+ UPROPERTY() UVehicleDynamicsComponent* Dynamics=nullptr;
+ UPROPERTY() UVehicleDamageComponent* Damage=nullptr;
  bool bHeavyTruck=false,bNeedsTeleport=true;
+ int32 VehicleContacts=0;
  FVector TargetPosition=FVector::ZeroVector;
  float TargetYaw=0.f,LastHitTime=-1000.f;
  UFUNCTION() void OnVehicleHit(UPrimitiveComponent* HitComponent,AActor* OtherActor,UPrimitiveComponent* OtherComponent,FVector NormalImpulse,const FHitResult& Hit);

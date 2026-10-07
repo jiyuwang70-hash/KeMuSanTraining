@@ -1509,6 +1509,7 @@ void AExamController::MonitorGeneral(float DT)
 	{
 		const float Spd = CarSpeedKmh();
 
+		if(Car->IsOverturned()) { FailExam(TEXT("车辆侧翻，考试结束")); return; }
 		// 与机动车、行人或自行车发生碰撞 -> 不合格
 		if (Phase == EExamPhase::Driving || Phase == EExamPhase::PullOver)
 		{

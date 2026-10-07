@@ -3,6 +3,9 @@
 #include "GameFramework/PlayerController.h"
 #include "Components/BoxComponent.h"
 #include "VehiclePhysicsCore.h"
+#include "VehicleDynamicsComponent.h"
+#include "VehicleDamageComponent.h"
+#include "ProceduralMeshComponent.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -21,7 +24,9 @@ AAICar::AAICar()
 
 	PhysicsBody=CreateDefaultSubobject<UBoxComponent>(TEXT("Root"));
  UBoxComponent* Root=PhysicsBody;
- VehiclePhysics::Configure(Root,FVector(230,98,95),1500.f);
+ VehiclePhysics::Configure(Root,FVector(230,98,55),1500.f);
+ Dynamics=CreateDefaultSubobject<UVehicleDynamicsComponent>(TEXT("Dynamics"));
+ Damage=CreateDefaultSubobject<UVehicleDamageComponent>(TEXT("Damage"));
  Root->OnComponentHit.AddDynamic(this,&AAICar::OnVehicleHit);
  Root->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetRootComponent(Root);
@@ -125,13 +130,13 @@ void AAICar::Tick(float Dt)
  const float Correction=SpeedMs>.01f?FMath::Clamp(FVector::DotProduct(Delta,Forward)*.01f,-2.f,2.f):0.f;
  const float Accel=FMath::Clamp((SpeedMs+Correction-Speed)*2.f,-8.f,2.f);
  const bool Recovering=GetWorld()->GetTimeSeconds()-LastHitTime<1.f;
- VehiclePhysics::Drive(PhysicsBody,Recovering?0.f:Accel,Recovering?PhysicsBody->GetPhysicsAngularVelocityInRadians().Z:FMath::DegreesToRadians(Error)*2.f,Dt,!Recovering);
- if(!Recovering)PhysicsBody->AddForce(GetActorRightVector()*FMath::Clamp(FVector::DotProduct(Delta,GetActorRightVector())*2.f,-150.f,150.f)*PhysicsBody->GetMass());
+ VehiclePhysics::Drive(PhysicsBody,Recovering?0.f:Accel,Recovering?PhysicsBody->GetPhysicsAngularVelocityInRadians().Z:FMath::DegreesToRadians(Error)*2.f,Dt,!Recovering,Recovering?0.f:FMath::Clamp(FVector::DotProduct(Delta,GetActorRightVector())*.02f,-1.5f,1.5f));
  if(bRouteMode && FVector::Dist2D(GetActorLocation(),EndLoc)<250.f)Deactivate();
 }
 
 void AAICar::Activate(float InSpeedKmh)
 {
+ Damage->Repair();VehicleContacts=0;
  bNeedsTeleport=true;
  LastHitTime=-1000.f;
 	bActive = true;
@@ -142,6 +147,7 @@ void AAICar::Activate(float InSpeedKmh)
 
 void AAICar::Deactivate()
 {
+ Dynamics->SetCollisionActive(false);
  PhysicsBody->SetSimulatePhysics(false);
  PhysicsBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	bActive = false;
@@ -151,26 +157,31 @@ void AAICar::Deactivate()
 
 void AAICar::SetPose(const FVector& Pos,float Yaw)
 {
- TargetPosition=Pos*100.f;TargetYaw=Yaw;
+ TargetPosition=Pos*100.f+FVector(0,0,Dynamics->RideHeightCm);TargetYaw=Yaw;
  if(bNeedsTeleport)
  {
   SetActorLocationAndRotation(TargetPosition,FRotator(0,Yaw,0),false,nullptr,ETeleportType::TeleportPhysics);
   PhysicsBody->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
   PhysicsBody->SetSimulatePhysics(true);
+  Dynamics->SetCollisionActive(true);
   PhysicsBody->SetPhysicsLinearVelocity(FVector::ZeroVector);
   PhysicsBody->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
   bNeedsTeleport=false;
  }
 }
 
-void AAICar::OnVehicleHit(UPrimitiveComponent*,AActor*,UPrimitiveComponent*,FVector Impulse,const FHitResult&)
+void AAICar::OnVehicleHit(UPrimitiveComponent*,AActor*,UPrimitiveComponent* Other,FVector Impulse,const FHitResult& Hit)
 {
- if(Impulse.Size()>100.f)LastHitTime=GetWorld()->GetTimeSeconds();
+ Damage->Impact(Hit,Impulse,PhysicsBody->GetMass());
+ if(Other&&Other->GetCollisionObjectType()==ECC_Vehicle&&Impulse.Size()>100.f){LastHitTime=GetWorld()->GetTimeSeconds();++VehicleContacts;}
 }
 
 void AAICar::MakeHeavyTruck()
 {
- bHeavyTruck=true;
+ Damage->RebuildPanels();
+ TArray<UProceduralMeshComponent*> OldPanels;GetComponents(OldPanels);
+ for(auto* Panel:OldPanels)Panel->SetVisibility(false);
+ bHeavyTruck=true;Tags.AddUnique(TEXT("HeavyTruck"));Dynamics->SetHeavyTruck();
  TArray<UStaticMeshComponent*> Parts;GetComponents(Parts);
  for(UStaticMeshComponent* Part:Parts)Part->SetVisibility(false);
  UStaticMesh* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -180,7 +191,7 @@ void AAICar::MakeHeavyTruck()
  {
   UStaticMeshComponent* Mesh=NewObject<UStaticMeshComponent>(this);
   Mesh->SetStaticMesh(Wheel?Cylinder:Cube);Mesh->SetupAttachment(PhysicsBody);
-  Mesh->SetRelativeLocation(Position);Mesh->SetRelativeScale3D(Scale);
+  Mesh->SetRelativeLocation(Position-FVector(0,0,Dynamics->RideHeightCm));Mesh->SetRelativeScale3D(Scale);
   if(Wheel)Mesh->SetRelativeRotation(FRotator(0,0,90));
   Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->RegisterComponent();
   auto* Dyn=UMaterialInstanceDynamic::Create(Material,this);Dyn->SetVectorParameterValue(TEXT("Color"),Color);Mesh->SetMaterial(0,Dyn);
@@ -191,7 +202,8 @@ void AAICar::MakeHeavyTruck()
  Part(FVector(-115,0,185),FVector(6.3,2.45,2.1),FLinearColor(.65,.31,.12));
  Part(FVector(450,0,95),FVector(.1,2.2,.2),FLinearColor(.7,.72,.75));
  for(float X:{320.f,-180.f,-325.f})for(float Y:{-118.f,118.f})Part(FVector(X,Y,44),FVector(.88,.88,.28),FLinearColor(.04,.04,.05),true);
- VehiclePhysics::Configure(PhysicsBody,FVector(450,125,160),14000.f);
+ VehiclePhysics::Configure(PhysicsBody,FVector(450,125,120),14000.f);
+ Damage->RebuildPanels();
  if(!bActive)PhysicsBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
  UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysics] heavy_truck mass=14000 length=9 width=2.5 name=%s"),*GetName());
 }

@@ -81,7 +81,10 @@ protected:
  bool bPhysicsVerification=false;
  int32 PhysicsCase=-1,PhysicsFailures=0;
  float PhysicsTime=0.f,PhysicsPeakSpeed=0.f,PhysicsPeakAngular=0.f;
- float LightImpactSpeed=0.f;
+ float LightImpactSpeed=0.f,LightDent=0.f,PhysicsMinUp=1.f,PhysicsMaxRoll=0.f;
+ bool bRollShot=false,bCornerStarted=false,bPlayerImpactStarted=false,bDamageShot=false;
+ UPROPERTY() class ACameraActor* TestCamera=nullptr;
+ FString DamageScreenshotDir;
  UPROPERTY() AAICar* PhysicsA=nullptr;
  UPROPERTY() AAICar* PhysicsB=nullptr;
  FVector PhysicsOrigin=FVector::ZeroVector;

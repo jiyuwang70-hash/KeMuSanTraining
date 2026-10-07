@@ -4,6 +4,11 @@
 #include "GameFramework/SpringArmComponent.h"
 #include "HighResScreenshot.h"
 #include "Components/BoxComponent.h"
+#include "VehicleDamageComponent.h"
+#include "VehicleDynamicsComponent.h"
+#include "VehiclePhysicsCore.h"
+#include "Camera/CameraActor.h"
+#include "Camera/CameraComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerStart.h"
@@ -359,7 +364,13 @@ void AKeMuSanGameMode::TickShowcaseCapture(float DeltaSeconds)
 void AKeMuSanGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+ auto* Ground=NewObject<UBoxComponent>(this,TEXT("VehicleGround"));
+ Ground->SetMobility(EComponentMobility::Static);Ground->SetBoxExtent(FVector(500000,500000,100));
+ Ground->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);Ground->SetCollisionObjectType(ECC_WorldStatic);Ground->SetCollisionResponseToAllChannels(ECR_Ignore);
+ Ground->SetCollisionResponseToChannel(ECC_Vehicle,ECR_Block);Ground->SetCollisionResponseToChannel(ECC_WorldStatic,ECR_Block);
+ Ground->SetWorldLocation(FVector(150000,150000,-100));Ground->RegisterComponent();
  bPhysicsVerification=FParse::Param(FCommandLine::Get(),TEXT("test-vehicle-physics"));
+ FParse::Value(FCommandLine::Get(),TEXT("damage-screenshot-dir="),DamageScreenshotDir);
 
 	// 生成考试总控
 	FActorSpawnParameters Params;
@@ -510,35 +521,126 @@ void AKeMuSanGameMode::TogglePause()
 void AKeMuSanGameMode::TickPhysicsVerification(float Dt)
 {
  PhysicsTime+=Dt;
- if(PhysicsCase==6)
+ if(PhysicsCase==11)
+ {
+  auto* PC=GetWorld()->GetFirstPlayerController();
+  auto* Player=PC?Cast<AKeMuSanPawn>(PC->GetPawn()):nullptr;
+  if(Player && TestCamera)
+  {
+   const FVector Target=Player->GetActorLocation()+FVector(0,0,20),Pos=Target+FVector(100,-500,700);
+   TestCamera->SetActorLocationAndRotation(Pos,(Target-Pos).Rotation());
+  }
+  if(Player && PhysicsTime>.25f && !bPlayerImpactStarted)
+  {
+   bPlayerImpactStarted=true;
+   Player->GetPhysicsBody()->SetPhysicsLinearVelocity(FVector(-1600,0,0));
+  }
+  if(Player && PhysicsTime>2.f && !bDamageShot)
+  {
+   bDamageShot=true;
+   const bool Pass=Player->GetDamage()->MaxDentCm()>5.f && Player->GetDamage()->DamagedVertexCount()>10 && FMath::Abs(Player->GetPhysicsBody()->GetMass()-1400.f)<2.f;
+   if(!Pass)++PhysicsFailures;
+   UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] player_crash %s dent_cm=%.3f vertices=%d"),Pass?TEXT("PASS"):TEXT("FAIL"),Player->GetDamage()->MaxDentCm(),Player->GetDamage()->DamagedVertexCount());
+   Player->ForceStop();
+   // The contact and dent assertions above use the real truck. Remove only the
+   // test obstacle after impact so it cannot obscure the retained crumpled panels.
+   if(PhysicsA){PhysicsA->Destroy();PhysicsA=nullptr;}
+   if(!DamageScreenshotDir.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::Combine(DamageScreenshotDir,TEXT("dent-after.png")),false,false);
+  }
+  if(PhysicsTime<3.f)return;
+  if(PhysicsA){PhysicsA->Destroy();PhysicsA=nullptr;}
+ }
+ if(PhysicsCase==12)
  {
   if(PhysicsTime>.8f && !PhysicsScreenshot.IsEmpty()){FScreenshotRequest::RequestScreenshot(PhysicsScreenshot,false,false);PhysicsScreenshot.Empty();}
   if(PhysicsTime>1.5f){FPlatformMisc::RequestExitWithStatus(false,PhysicsFailures==0?0:1);bPhysicsVerification=false;}
   return;
  }
 
+ if(PhysicsA && PhysicsCase>=6 && PhysicsCase<=8)
+ {
+  auto* Chassis=PhysicsA->GetPhysicsBody();
+  const float Speed=FVector::DotProduct(Chassis->GetPhysicsLinearVelocity(),PhysicsA->GetActorForwardVector())*.01f;
+  if(PhysicsTime>=.6f && !bCornerStarted){Chassis->SetPhysicsLinearVelocity(PhysicsA->GetActorForwardVector()*(PhysicsCase==6?500.f:3000.f));bCornerStarted=true;}
+  if(bCornerStarted)VehiclePhysics::Drive(Chassis,FMath::Clamp(((PhysicsCase==6?5.f:30.f)-Speed)*2.f,-4.f,4.f),PhysicsCase==6?.3f:.7f,Dt);
+  PhysicsMinUp=FMath::Min(PhysicsMinUp,static_cast<float>(PhysicsA->GetActorUpVector().Z));
+  PhysicsMaxRoll=FMath::Max(PhysicsMaxRoll,FMath::Abs(PhysicsA->GetActorRotation().Roll));
+  if(PhysicsCase==7 && PhysicsMinUp<.15f && !bRollShot)
+  {
+   bRollShot=true;
+   if(!DamageScreenshotDir.IsEmpty())
+   {
+    if(auto* PC=GetWorld()->GetFirstPlayerController())
+    {
+     const FVector Target=PhysicsA->GetActorLocation();
+     const FVector CameraPos=Target+FVector(-850,-1250,500);
+     TestCamera=GetWorld()->SpawnActor<ACameraActor>(CameraPos,(Target-CameraPos).Rotation());
+     TestCamera->GetCameraComponent()->FieldOfView=60.f;
+     PC->SetViewTarget(TestCamera);if(PC->GetHUD())PC->GetHUD()->bShowHUD=false;
+    }
+    FScreenshotRequest::RequestScreenshot(FPaths::Combine(DamageScreenshotDir,TEXT("rollover.png")),false,false);
+   }
+  }
+ }
  if(PhysicsA && PhysicsB)
  {
   PhysicsPeakSpeed=FMath::Max(PhysicsPeakSpeed,static_cast<float>(PhysicsB->GetPhysicsBody()->GetPhysicsLinearVelocity().Size()*.01));
   PhysicsPeakAngular=FMath::Max(PhysicsPeakAngular,FMath::Abs(PhysicsB->GetPhysicsBody()->GetPhysicsAngularVelocityInDegrees().Z));
  }
- if(PhysicsTime<2.f)return;
- if(PhysicsCase>=0)
+ if(PhysicsTime<(PhysicsCase>=6?6.f:2.f))return;
+ if(PhysicsCase>=0 && PhysicsCase<11)
  {
-  bool Pass=PhysicsA && PhysicsB && PhysicsA->GetPhysicsBody()->IsSimulatingPhysics() && PhysicsB->GetPhysicsBody()->IsSimulatingPhysics();
+  bool Pass=PhysicsA && PhysicsA->GetPhysicsBody()->IsSimulatingPhysics() && (PhysicsCase>=6 || (PhysicsB && PhysicsB->GetPhysicsBody()->IsSimulatingPhysics()));
+  if(PhysicsB)Pass &= FMath::Abs(PhysicsB->GetPhysicsBody()->GetMass()-(PhysicsCase==1?14000.f:1500.f))<2.f;
+  Pass &= FMath::Abs(PhysicsA->GetPhysicsBody()->GetMass()-(PhysicsCase==7?14000.f:1500.f))<2.f;
+  const FVector LocalCOM=PhysicsA->GetActorTransform().InverseTransformPosition(PhysicsA->GetPhysicsBody()->GetCenterOfMass());
+  Pass &= FMath::Abs(LocalCOM.Z-(PhysicsCase==7?30.f:-12.f))<1.f;
   const float Moved=PhysicsB?FVector::Dist2D(PhysicsOrigin,PhysicsB->GetActorLocation())*.01f:0.f;
-  if(PhysicsCase==0){LightImpactSpeed=PhysicsPeakSpeed;Pass &= PhysicsPeakSpeed>1.f && Moved>.5f;}
+  if(PhysicsCase==0){LightImpactSpeed=PhysicsPeakSpeed;LightDent=PhysicsB->GetDamage()->MaxDentCm();Pass &= PhysicsPeakSpeed>1.f && Moved>.5f && LightDent>1.f && PhysicsB->GetDamage()->DamagedVertexCount()>10;}
   if(PhysicsCase==1)Pass &= PhysicsPeakSpeed>.05f && PhysicsPeakSpeed<LightImpactSpeed*.6f && PhysicsB->GetPhysicsBody()->GetMass()>10000.f;
   if(PhysicsCase==2)Pass &= PhysicsPeakAngular>2.f && Moved>.2f;
   if(PhysicsCase==3)Pass &= PhysicsA->GetActorLocation().X<PhysicsB->GetActorLocation().X;
   if(PhysicsCase==4)Pass &= PhysicsA->GetActorLocation().X>PhysicsB->GetActorLocation().X && Moved>.2f;
   if(PhysicsCase==5)Pass &= PhysicsA->GetActorLocation().X<PhysicsB->GetActorLocation().X && PhysicsPeakSpeed>1.f;
+  if(PhysicsCase==5)Pass &= PhysicsB->GetDamage()->MaxDentCm()>LightDent;
+  if(PhysicsCase==6)Pass &= PhysicsMinUp>.85f && PhysicsMaxRoll<25.f;
+  if(PhysicsCase==7)Pass &= PhysicsMinUp<.15f && PhysicsMaxRoll>70.f && PhysicsA->GetVehicleContacts()==0;
+  if(PhysicsCase==10)
+  {
+   const float Lowest=PhysicsA->GetDynamics()->LowestColliderZ();
+   const bool RoofContact=PhysicsA->GetDynamics()->RoofContacts>0 && PhysicsA->GetDamage()->MaxDentCm()>5.f && Lowest>-5.f;
+   Pass &= RoofContact;
+   UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] roof_contact %s count=%d dent_cm=%.3f lowest_z_cm=%.3f"),RoofContact?TEXT("PASS"):TEXT("FAIL"),PhysicsA->GetDynamics()->RoofContacts,PhysicsA->GetDamage()->MaxDentCm(),Lowest);
+  }
+  if(PhysicsCase==8)Pass &= PhysicsMaxRoll>3.f;
+  if(PhysicsCase==9)Pass &= PhysicsA->GetDamage()->MaxDentCm()<.1f && PhysicsB->GetDamage()->MaxDentCm()<.1f;
+  if(PhysicsCase>=6)UE_LOG(LogTemp,Log,TEXT("[KeMuSanDynamicsTest] case=%d %s min_up=%.3f max_roll_deg=%.2f"),PhysicsCase,Pass?TEXT("PASS"):TEXT("FAIL"),PhysicsMinUp,PhysicsMaxRoll);
   if(!Pass)++PhysicsFailures;
   UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysicsTest] case=%d %s target_peak_ms=%.3f target_yaw_deg_s=%.3f target_moved_m=%.3f mass_kg=%.1f"),PhysicsCase,Pass?TEXT("PASS"):TEXT("FAIL"),PhysicsPeakSpeed,PhysicsPeakAngular,Moved,PhysicsB?PhysicsB->GetPhysicsBody()->GetMass():0.f);
+  if(PhysicsB)UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] case=%d dent_cm=%.3f vertices=%d"),PhysicsCase,PhysicsB->GetDamage()->MaxDentCm(),PhysicsB->GetDamage()->DamagedVertexCount());
+  if(PhysicsCase==0)
+  {
+   const bool HadDamage=PhysicsB->GetDamage()->MaxDentCm()>1.f && PhysicsB->GetDamage()->DamagedVertexCount()>0;
+   PhysicsB->Activate(0);
+   const bool Repaired=HadDamage && PhysicsB->GetDamage()->MaxDentCm()<.01f && PhysicsB->GetDamage()->DamagedVertexCount()==0;
+   if(!Repaired)++PhysicsFailures;
+   UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] repair %s"),Repaired?TEXT("PASS"):TEXT("FAIL"));
+   PhysicsB->Deactivate();
+   bool NoGhost=!PhysicsB->GetPhysicsBody()->IsSimulatingPhysics();
+   TArray<UPrimitiveComponent*> Shapes;PhysicsB->GetComponents(Shapes);
+   for(auto* Shape:Shapes)if(Shape->GetCollisionObjectType()==ECC_Vehicle && Shape->GetCollisionEnabled()!=ECollisionEnabled::NoCollision)NoGhost=false;
+   if(!NoGhost)++PhysicsFailures;
+   UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] recycle_collision %s"),NoGhost?TEXT("PASS"):TEXT("FAIL"));
+   PhysicsB->Activate(0);PhysicsB->SetPose(FVector(3000,3000,0),0);
+   const FVector RestoredCOM=PhysicsB->GetActorTransform().InverseTransformPosition(PhysicsB->GetPhysicsBody()->GetCenterOfMass());
+   const bool Restored=PhysicsB->GetPhysicsBody()->IsSimulatingPhysics() && FMath::Abs(PhysicsB->GetPhysicsBody()->GetMass()-1500.f)<2.f && FMath::Abs(RestoredCOM.Z+12.f)<1.f;
+   if(!Restored)++PhysicsFailures;
+   UE_LOG(LogTemp,Log,TEXT("[KeMuSanDamageTest] pool_reactivate %s mass_kg=%.3f com_z_cm=%.3f"),Restored?TEXT("PASS"):TEXT("FAIL"),PhysicsB->GetPhysicsBody()->GetMass(),RestoredCOM.Z);
+  }
   if(PhysicsA)PhysicsA->Destroy();if(PhysicsB)PhysicsB->Destroy();
  }
- ++PhysicsCase;PhysicsTime=0;PhysicsPeakSpeed=0;PhysicsPeakAngular=0;
- if(PhysicsCase>=6)
+ ++PhysicsCase;PhysicsTime=0;PhysicsPeakSpeed=0;PhysicsPeakAngular=0;PhysicsMinUp=1;PhysicsMaxRoll=0;bCornerStarted=false;
+ if(PhysicsCase>=12)
  {
   UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysicsTest] complete %s failures=%d"),PhysicsFailures==0?TEXT("PASS"):TEXT("FAIL"),PhysicsFailures);
   FString Screenshot;
@@ -547,6 +649,7 @@ void AKeMuSanGameMode::TickPhysicsVerification(float Dt)
    APlayerController* PC=GetWorld()->GetFirstPlayerController();
    if(auto* Car=PC?Cast<AKeMuSanPawn>(PC->GetPawn()):nullptr)
    {
+    Car->GetDamage()->Repair();Car->SetActorTickEnabled(true);PC->SetViewTarget(Car);
     Car->SetTestPose(FVector(48000.f,31750.f,25.f),FRotator(0,180,0));
     if(auto* Arm=Car->FindComponentByClass<USpringArmComponent>())
     {
@@ -568,15 +671,37 @@ void AKeMuSanGameMode::TickPhysicsVerification(float Dt)
  PhysicsA=GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector,FRotator::ZeroRotator,Params);
  PhysicsB=GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector,FRotator::ZeroRotator,Params);
  if(!PhysicsA||!PhysicsB){++PhysicsFailures;return;}
+ if(PhysicsCase==11)
+ {
+  PhysicsB->Destroy();PhysicsB=nullptr;
+  PhysicsA->MakeHeavyTruck();PhysicsA->Activate(0);PhysicsA->SetPose(FVector(468,317.5,0),0);
+  PhysicsA->SetActorTickEnabled(false);
+  auto* PC=GetWorld()->GetFirstPlayerController();
+  if(auto* Player=PC?Cast<AKeMuSanPawn>(PC->GetPawn()):nullptr)
+  {
+   Player->SetTestPose(FVector(48000,31750,0),FRotator(0,180,0));Player->GetDamage()->Repair();Player->SetActorTickEnabled(false);
+   const FVector Target(48000,31750,95),CameraPos=Target+FVector(100,-500,700);
+   TestCamera=GetWorld()->SpawnActor<ACameraActor>(CameraPos,(Target-CameraPos).Rotation());
+   TestCamera->GetCameraComponent()->FieldOfView=55.f;
+   PC->SetViewTarget(TestCamera);if(PC->GetHUD())PC->GetHUD()->bShowHUD=false;
+   if(!DamageScreenshotDir.IsEmpty())FScreenshotRequest::RequestScreenshot(FPaths::Combine(DamageScreenshotDir,TEXT("dent-before.png")),false,false);
+  }
+  return;
+ }
  if(PhysicsCase==1)PhysicsB->MakeHeavyTruck();
+ if(PhysicsCase==7)PhysicsA->MakeHeavyTruck();
  FVector A(3000.f-10.f,3000.f,0.f),B(3000.f,3000.f,0.f);
  FVector Velocity(800.f,0,0);float YawA=0.f;
  if(PhysicsCase==2){A=FVector(3000.f+1.f,2990.f,0);Velocity=FVector(0,800,0);YawA=90.f;}
  if(PhysicsCase==4){A=FVector(3010.f,3000.f,0);Velocity=FVector(-800,0,0);}
  if(PhysicsCase==5){A=FVector(2980.f,3000.f,0);Velocity=FVector(6000,0,0);}
+ if(PhysicsCase>=6 && PhysicsCase<=8){A=FVector(470.f,317.5f,0);B=FVector(2900.f,2900.f,0);Velocity=FVector::ZeroVector;}
+ if(PhysicsCase==9){A=FVector(2994.8f,3000.f,0);Velocity=FVector(80,0,0);}
+ if(PhysicsCase==10){A=FVector(480,317.5,3.5);B=FVector(2900,2900,0);Velocity=FVector(0,0,-800);}
  PhysicsA->Activate(0);PhysicsB->Activate(0);
  PhysicsA->SetPose(A,YawA);PhysicsB->SetPose(B,0);
  PhysicsA->SetActorTickEnabled(false);PhysicsB->SetActorTickEnabled(false);
+ if(PhysicsCase==10)PhysicsA->SetActorRotation(FRotator(0,0,180),ETeleportType::TeleportPhysics);
  PhysicsOrigin=PhysicsB->GetActorLocation();
  PhysicsA->GetPhysicsBody()->SetPhysicsLinearVelocity(Velocity);
  if(PhysicsCase==3)PhysicsB->GetPhysicsBody()->SetPhysicsLinearVelocity(FVector(-800,0,0));

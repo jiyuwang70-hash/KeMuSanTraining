@@ -18,7 +18,7 @@ public class KeMuSanTraining : ModuleRules
 			"UMG",
 			"Json",
 			"JsonUtilities",
-            "PhysicsCore"
+            "PhysicsCore", "ProceduralMeshComponent"
 		});
 	}
 }

@@ -1,4 +1,4 @@
-// 科目三考试车 Pawn：手动挡 / 自动挡运动学车辆 + 真实光学后视镜系统 + 第一人称座舱
+// 科目三考试车 Pawn：手动挡 / 自动挡 Chaos 动态车辆 + 真实光学后视镜系统 + 第一人称座舱
 #pragma once
 
 #include "CoreMinimal.h"
@@ -10,6 +10,8 @@ class USpringArmComponent;
 class UCameraComponent;
 class UStaticMeshComponent;
 class UBoxComponent;
+class UVehicleDynamicsComponent;
+class UVehicleDamageComponent;
 class UMaterialInstanceDynamic;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
@@ -103,10 +105,10 @@ public:
 	// 强制停车（驶出路线终点时）
 	void ForceStop();
 
-	// 供展示测试专用：设置绝对位置与朝向，并同步内部 YawDeg 与物理速度，彻底冻结动力防漂移
+	// 供展示测试专用：设置绝对位置与朝向，并同步内部 YawDeg 与物理速度，关闭驾驶输入；悬挂/重力继续工作
 	void SetTestPose(const FVector& LocCm, const FRotator& Rot)
 	{
-		SetActorLocationAndRotation(LocCm, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+		SetActorLocationAndRotation(LocCm+FVector(0,0,85), Rot, false, nullptr, ETeleportType::TeleportPhysics);
 		ForceStop();
 		YawDeg = Rot.Yaw;
 		SpeedMs = 0.f;
@@ -129,8 +131,12 @@ protected:
 	UBoxComponent* Root = nullptr;
 public:
  UBoxComponent* GetPhysicsBody() const { return Root; }
+ UVehicleDamageComponent* GetDamage() const { return Damage; }
+ bool IsOverturned() const;
  float GetLastVehicleHitTime() const { return LastVehicleHitTime; }
 protected:
+ UPROPERTY() UVehicleDynamicsComponent* Dynamics=nullptr;
+ UPROPERTY() UVehicleDamageComponent* Damage=nullptr;
  float LastVehicleHitTime=-1000.f;
  UFUNCTION() void OnVehicleHit(UPrimitiveComponent* HitComponent,AActor* OtherActor,UPrimitiveComponent* OtherComponent,FVector NormalImpulse,const FHitResult& Hit);
  void ApplyPhysicalDrive(float Dt,float BeforeSpeed,float DesiredYawRate);

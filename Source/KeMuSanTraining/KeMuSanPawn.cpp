@@ -1,6 +1,8 @@
 #include "KeMuSanPawn.h"
 #include "Components/BoxComponent.h"
 #include "VehiclePhysicsCore.h"
+#include "VehicleDynamicsComponent.h"
+#include "VehicleDamageComponent.h"
 
 #include "Camera/CameraComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -32,7 +34,9 @@ AKeMuSanPawn::AKeMuSanPawn()
 	SetActorEnableCollision(true);
 
 	Root = CreateDefaultSubobject<UBoxComponent>(TEXT("Root"));
- VehiclePhysics::Configure(Root,FVector(215,98,95),1400.f);
+ VehiclePhysics::Configure(Root,FVector(215,98,55),1400.f);
+ Dynamics=CreateDefaultSubobject<UVehicleDynamicsComponent>(TEXT("Dynamics"));
+ Damage=CreateDefaultSubobject<UVehicleDamageComponent>(TEXT("Damage"));
  Root->OnComponentHit.AddDynamic(this,&AKeMuSanPawn::OnVehicleHit);
 	SetRootComponent(Root);
 
@@ -595,7 +599,8 @@ void AKeMuSanPawn::SelectGear(int32 GearIndex)
 
 void AKeMuSanPawn::ResetVehicle(const FVector& Loc, const FRotator& Rot)
 {
-	SetActorLocationAndRotation(Loc * 100.0f, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+	Damage->Repair();
+ SetActorLocationAndRotation(Loc * 100.0f+FVector(0,0,85), Rot, false, nullptr, ETeleportType::TeleportPhysics);
 	Root->SetPhysicsLinearVelocity(FVector::ZeroVector);
  Root->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
  LastVehicleHitTime=-1000.f;
@@ -1170,9 +1175,12 @@ void AKeMuSanPawn::ApplyPhysicalDrive(float Dt,float Before,float YawRate)
  SpeedMs=Before;
  YawDeg=GetActorRotation().Yaw;
 }
-void AKeMuSanPawn::OnVehicleHit(UPrimitiveComponent*,AActor* Other,UPrimitiveComponent*,FVector Impulse,const FHitResult&)
+bool AKeMuSanPawn::IsOverturned() const { return Dynamics && Dynamics->IsOverturned(); }
+void AKeMuSanPawn::OnVehicleHit(UPrimitiveComponent*,AActor* Other,UPrimitiveComponent* OtherComponent,FVector Impulse,const FHitResult& Hit)
 {
  if(!Other || Other==this || Impulse.Size()<100.f)return;
+ Damage->Impact(Hit,Impulse,Root->GetMass());
+ if(!OtherComponent||OtherComponent->GetCollisionObjectType()!=ECC_Vehicle)return;
  LastVehicleHitTime=GetWorld()->GetTimeSeconds();
  UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysics] vehicle_hit other=%s impulse=%.1f speed=%.2f yaw_rate=%.3f"),*Other->GetName(),Impulse.Size(),Root->GetPhysicsLinearVelocity().Size()*.01f,Root->GetPhysicsAngularVelocityInRadians().Z);
 }

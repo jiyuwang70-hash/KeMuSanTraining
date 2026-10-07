@@ -2,10 +2,9 @@
 #include "CoreMinimal.h"
 class UBoxComponent;
 
-// Actual Chaos dynamic bodies. Flat training roads constrain vertical/roll/pitch
-// motion; longitudinal/lateral motion and yaw remain physically simulated.
+// Free 3D Chaos chassis, ray suspension and load-limited tire contact forces.
 namespace VehiclePhysics
 {
  void Configure(UBoxComponent* Body, const FVector& HalfExtentCm, float MassKg);
- void Drive(UBoxComponent* Body, float AccelerationMs2, float DesiredYawRateRad, float Dt, bool bGrip=true);
+ void Drive(UBoxComponent* Body, float AccelerationMs2, float DesiredYawRateRad, float Dt, bool bGrip=true, float SideAccelerationMs2=0.f);
 }

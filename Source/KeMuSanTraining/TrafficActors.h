@@ -6,6 +6,7 @@
 #include "TrafficActors.generated.h"
 
 class UStaticMeshComponent;
+class UBoxComponent;
 class UMaterialInstanceDynamic;
 class FRouteTrack;
 
@@ -29,7 +30,19 @@ public:
 	void Activate(float InSpeedKmh);
 	void Deactivate();
 	void SetPose(const FVector& Pos, float YawDeg);
-	void SetSpeedMs(float InSpeed) { SpeedMs = InSpeed; }
+ void SetSpeedMs(float InSpeed) { SpeedMs = InSpeed; }
+ UBoxComponent* GetPhysicsBody() const { return PhysicsBody; }
+ void MakeHeavyTruck();
+ float GetHalfLength() const { return bHeavyTruck?4.5f:2.3f; }
+ float GetHalfWidth() const { return bHeavyTruck?1.25f:.98f; }
+ bool IsHeavyTruck() const { return bHeavyTruck; }
+private:
+ UPROPERTY() UBoxComponent* PhysicsBody=nullptr;
+ bool bHeavyTruck=false,bNeedsTeleport=true;
+ FVector TargetPosition=FVector::ZeroVector;
+ float TargetYaw=0.f,LastHitTime=-1000.f;
+ UFUNCTION() void OnVehicleHit(UPrimitiveComponent* HitComponent,AActor* OtherActor,UPrimitiveComponent* OtherComponent,FVector NormalImpulse,const FHitResult& Hit);
+public:
 	float GetSpeedMs() const { return SpeedMs; }
 
 protected:

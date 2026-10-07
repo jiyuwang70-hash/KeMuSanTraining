@@ -1,4 +1,9 @@
 #include "KeMuSanGameMode.h"
+#include "TrafficActors.h"
+#include "GameFramework/HUD.h"
+#include "GameFramework/SpringArmComponent.h"
+#include "HighResScreenshot.h"
+#include "Components/BoxComponent.h"
 
 #include "Engine/World.h"
 #include "GameFramework/PlayerStart.h"
@@ -23,6 +28,7 @@ AKeMuSanGameMode::AKeMuSanGameMode()
 void AKeMuSanGameMode::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+ if(bPhysicsVerification)TickPhysicsVerification(DeltaSeconds);
 
 	if (bShowcaseCapturing)
 	{
@@ -353,6 +359,7 @@ void AKeMuSanGameMode::TickShowcaseCapture(float DeltaSeconds)
 void AKeMuSanGameMode::BeginPlay()
 {
 	Super::BeginPlay();
+ bPhysicsVerification=FParse::Param(FCommandLine::Get(),TEXT("test-vehicle-physics"));
 
 	// 生成考试总控
 	FActorSpawnParameters Params;
@@ -499,4 +506,78 @@ void AKeMuSanGameMode::TogglePause()
 	{
 		ExamController->OnPauseChanged(bPaused);
 	}
+}
+void AKeMuSanGameMode::TickPhysicsVerification(float Dt)
+{
+ PhysicsTime+=Dt;
+ if(PhysicsCase==6)
+ {
+  if(PhysicsTime>.8f && !PhysicsScreenshot.IsEmpty()){FScreenshotRequest::RequestScreenshot(PhysicsScreenshot,false,false);PhysicsScreenshot.Empty();}
+  if(PhysicsTime>1.5f){FPlatformMisc::RequestExitWithStatus(false,PhysicsFailures==0?0:1);bPhysicsVerification=false;}
+  return;
+ }
+
+ if(PhysicsA && PhysicsB)
+ {
+  PhysicsPeakSpeed=FMath::Max(PhysicsPeakSpeed,static_cast<float>(PhysicsB->GetPhysicsBody()->GetPhysicsLinearVelocity().Size()*.01));
+  PhysicsPeakAngular=FMath::Max(PhysicsPeakAngular,FMath::Abs(PhysicsB->GetPhysicsBody()->GetPhysicsAngularVelocityInDegrees().Z));
+ }
+ if(PhysicsTime<2.f)return;
+ if(PhysicsCase>=0)
+ {
+  bool Pass=PhysicsA && PhysicsB && PhysicsA->GetPhysicsBody()->IsSimulatingPhysics() && PhysicsB->GetPhysicsBody()->IsSimulatingPhysics();
+  const float Moved=PhysicsB?FVector::Dist2D(PhysicsOrigin,PhysicsB->GetActorLocation())*.01f:0.f;
+  if(PhysicsCase==0){LightImpactSpeed=PhysicsPeakSpeed;Pass &= PhysicsPeakSpeed>1.f && Moved>.5f;}
+  if(PhysicsCase==1)Pass &= PhysicsPeakSpeed>.05f && PhysicsPeakSpeed<LightImpactSpeed*.6f && PhysicsB->GetPhysicsBody()->GetMass()>10000.f;
+  if(PhysicsCase==2)Pass &= PhysicsPeakAngular>2.f && Moved>.2f;
+  if(PhysicsCase==3)Pass &= PhysicsA->GetActorLocation().X<PhysicsB->GetActorLocation().X;
+  if(PhysicsCase==4)Pass &= PhysicsA->GetActorLocation().X>PhysicsB->GetActorLocation().X && Moved>.2f;
+  if(PhysicsCase==5)Pass &= PhysicsA->GetActorLocation().X<PhysicsB->GetActorLocation().X && PhysicsPeakSpeed>1.f;
+  if(!Pass)++PhysicsFailures;
+  UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysicsTest] case=%d %s target_peak_ms=%.3f target_yaw_deg_s=%.3f target_moved_m=%.3f mass_kg=%.1f"),PhysicsCase,Pass?TEXT("PASS"):TEXT("FAIL"),PhysicsPeakSpeed,PhysicsPeakAngular,Moved,PhysicsB?PhysicsB->GetPhysicsBody()->GetMass():0.f);
+  if(PhysicsA)PhysicsA->Destroy();if(PhysicsB)PhysicsB->Destroy();
+ }
+ ++PhysicsCase;PhysicsTime=0;PhysicsPeakSpeed=0;PhysicsPeakAngular=0;
+ if(PhysicsCase>=6)
+ {
+  UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysicsTest] complete %s failures=%d"),PhysicsFailures==0?TEXT("PASS"):TEXT("FAIL"),PhysicsFailures);
+  FString Screenshot;
+  if(PhysicsFailures==0 && FParse::Value(FCommandLine::Get(),TEXT("physics-screenshot="),Screenshot))
+  {
+   APlayerController* PC=GetWorld()->GetFirstPlayerController();
+   if(auto* Car=PC?Cast<AKeMuSanPawn>(PC->GetPawn()):nullptr)
+   {
+    Car->SetTestPose(FVector(48000.f,31750.f,25.f),FRotator(0,180,0));
+    if(auto* Arm=Car->FindComponentByClass<USpringArmComponent>())
+    {
+     Arm->bEnableCameraLag=false;Arm->SetUsingAbsoluteRotation(true);
+     Arm->SetRelativeLocation(FVector(1100,0,220));Arm->TargetArmLength=1800.f;
+     Arm->SetWorldRotation(FRotator(-18,135,0));
+    }
+    if(PC->GetHUD())PC->GetHUD()->bShowHUD=false;
+    FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+    auto* Truck=GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector,FRotator::ZeroRotator,Params);
+    if(Truck){Truck->MakeHeavyTruck();Truck->Activate(0);Truck->SetPose(FVector(465,317.5,.25),180);}
+    PhysicsScreenshot=Screenshot;
+   }
+   return;
+  }
+  FPlatformMisc::RequestExitWithStatus(false,PhysicsFailures==0?0:1);bPhysicsVerification=false;return;
+ }
+ FActorSpawnParameters Params;Params.SpawnCollisionHandlingOverride=ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+ PhysicsA=GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector,FRotator::ZeroRotator,Params);
+ PhysicsB=GetWorld()->SpawnActor<AAICar>(FVector::ZeroVector,FRotator::ZeroRotator,Params);
+ if(!PhysicsA||!PhysicsB){++PhysicsFailures;return;}
+ if(PhysicsCase==1)PhysicsB->MakeHeavyTruck();
+ FVector A(3000.f-10.f,3000.f,0.f),B(3000.f,3000.f,0.f);
+ FVector Velocity(800.f,0,0);float YawA=0.f;
+ if(PhysicsCase==2){A=FVector(3000.f+1.f,2990.f,0);Velocity=FVector(0,800,0);YawA=90.f;}
+ if(PhysicsCase==4){A=FVector(3010.f,3000.f,0);Velocity=FVector(-800,0,0);}
+ if(PhysicsCase==5){A=FVector(2980.f,3000.f,0);Velocity=FVector(6000,0,0);}
+ PhysicsA->Activate(0);PhysicsB->Activate(0);
+ PhysicsA->SetPose(A,YawA);PhysicsB->SetPose(B,0);
+ PhysicsA->SetActorTickEnabled(false);PhysicsB->SetActorTickEnabled(false);
+ PhysicsOrigin=PhysicsB->GetActorLocation();
+ PhysicsA->GetPhysicsBody()->SetPhysicsLinearVelocity(Velocity);
+ if(PhysicsCase==3)PhysicsB->GetPhysicsBody()->SetPhysicsLinearVelocity(FVector(-800,0,0));
 }

@@ -258,18 +258,27 @@ void ARoadBuilder::WalkwayStrip(const FVector2D& Min, const FVector2D& Max)
 void ARoadBuilder::BuildRoadSurface()
 {
 	PieceLayerZ = 0.001f;
-	// ---- 主线与横向街道沥青 ----
-	AsphaltRect(FVector2D(-30.f, -3.5f), FVector2D(506.f, 3.5f));     // 东段 AB
-	AsphaltRect(FVector2D(506.f, -4.f), FVector2D(529.f, 21.f));      // 转角 B 区域
-	AsphaltRect(FVector2D(512.f, -60.f), FVector2D(528.f, 420.f));    // 纵向街道（穿转角 B）
-	AsphaltRect(FVector2D(516.5f, 21.f), FVector2D(523.5f, 306.f));   // 北段 BC
-	AsphaltRect(FVector2D(498.f, 306.f), FVector2D(534.f, 334.f));    // 转角 C 区域
-	AsphaltRect(FVector2D(534.f, 316.5f), FVector2D(664.f, 323.5f));  // 横向街道（转角 C 以东）
-	AsphaltRect(FVector2D(-30.f, 316.5f), FVector2D(498.f, 323.5f));  // 西段 CD
-	AsphaltRect(FVector2D(166.f, -80.f), FVector2D(180.f, 420.f));    // 信号路口纵向街 CS1
-	AsphaltRect(FVector2D(233.f, 180.f), FVector2D(247.f, 420.f));    // 西段平交口 CS2
+	// ---- 主线与横向街道沥青（10m宽主路 + 专用沥青停车泊位带）----
+	// 东段 AB：主路 y=[-5.0, 5.0]，南侧专用停车带 y=[-7.8, -5.0]，总沥青 y=[-7.8, 5.0]
+	AsphaltRect(FVector2D(-30.f, -7.8f), FVector2D(506.f, 5.0f));
+	// 转角 B 区域（充分覆盖 R=14m/16m 弯道内外弧）
+	AsphaltRect(FVector2D(504.f, -8.f), FVector2D(532.f, 25.f));
+	// 纵向街道（穿转角 B）
+	AsphaltRect(FVector2D(510.f, -60.f), FVector2D(530.f, 420.f));
+	// 北段 BC：主路 x=[515.0, 525.0]，东侧停车带 x=[525.0, 527.8]
+	AsphaltRect(FVector2D(515.0f, 21.f), FVector2D(527.8f, 306.f));
+	// 转角 C 区域
+	AsphaltRect(FVector2D(494.f, 304.f), FVector2D(536.f, 336.f));
+	// 横向街道（转角 C 以东）
+	AsphaltRect(FVector2D(534.f, 315.0f), FVector2D(664.f, 325.0f));
+	// 西段 CD：主路 y=[315.0, 325.0]，南侧专用沥青停车带 y=[312.2, 315.0]，总沥青 y=[312.2, 325.0]
+	AsphaltRect(FVector2D(-30.f, 312.2f), FVector2D(498.f, 325.0f));
+	// 信号路口纵向街 CS1（拓宽至 16m 双向宽干道）
+	AsphaltRect(FVector2D(164.f, -80.f), FVector2D(182.f, 420.f));
+	// 西段平交口 CS2
+	AsphaltRect(FVector2D(231.f, 180.f), FVector2D(249.f, 420.f));
 
-	// ---- 人行道（在路口处断开）----
+	// ---- 人行道（在路口处断开，完整避让行车道与路侧停车泊位）----
 	struct FRun { float A, B; };
 	auto WalkBandX = [&](float Y1, float Y2, const TArray<FRun>& Runs)
 	{
@@ -286,47 +295,45 @@ void ARoadBuilder::BuildRoadSurface()
 		}
 	};
 
-	// 东段两侧
-	const TArray<FRun> AbRuns = { { -30.f, 164.f }, { 182.f, 230.f }, { 250.f, 504.f } };
-	WalkBandX(3.85f, 6.35f, AbRuns);
-	WalkBandX(-6.35f, -3.85f, AbRuns);
+	// 东段两侧（北侧在行车道外，南侧在停车带外）
+	const TArray<FRun> AbRuns = { { -30.f, 162.f }, { 184.f, 228.f }, { 252.f, 504.f } };
+	WalkBandX(5.35f, 7.85f, AbRuns);         // 东段北侧人行道
+	WalkBandX(-10.45f, -7.95f, AbRuns);      // 东段南侧人行道（在停车带外）
 
-	// 西段两侧
-	const TArray<FRun> CdRuns = { { -30.f, 164.f }, { 182.f, 230.f }, { 250.f, 498.f } };
-	const TArray<FRun> CdNorthRuns = { { -30.f, 164.f }, { 182.f, 230.f },
-		{ 250.f, UTurnClearanceMinX }, { UTurnClearanceMaxX, 498.f } };
-	WalkBandX(323.85f, 326.35f, CdNorthRuns);
-	WalkBandX(313.65f, 316.15f, CdRuns);
+	// 西段两侧（北侧在行车道外，南侧完整后移到泊位外侧，绝不压车）
+	const TArray<FRun> CdRuns = { { -30.f, 162.f }, { 184.f, 228.f }, { 252.f, 498.f } };
+	const TArray<FRun> CdNorthRuns = { { -30.f, 162.f }, { 184.f, 228.f },
+		{ 252.f, UTurnClearanceMinX }, { UTurnClearanceMaxX, 498.f } };
+	WalkBandX(325.35f, 327.85f, CdNorthRuns); // 西段北侧人行道
+	WalkBandX(309.40f, 311.90f, CdRuns);      // 西段南侧人行道（后移4.3m，与停车带保持间隙）
 
 	// 北段两侧
-	WalkBandY(523.85f, 526.35f, { { 21.f, 306.f } });
-	WalkBandY(513.65f, 516.15f, { { 21.f, 306.f } });
+	WalkBandY(528.15f, 530.65f, { { 21.f, 306.f } }); // 东侧人行道（停车带外侧）
+	WalkBandY(512.35f, 514.85f, { { 21.f, 306.f } }); // 西侧人行道
 
 	// 转角 B 纵向街道两侧
-	WalkBandY(528.35f, 530.85f, { { -60.f, -10.f }, { 10.f, 306.f }, { 334.f, 420.f } });
-	WalkBandY(509.15f, 511.65f, { { -60.f, -10.f }, { 10.f, 306.f }, { 334.f, 420.f } });
+	WalkBandY(530.35f, 532.85f, { { -60.f, -10.f }, { 10.f, 306.f }, { 336.f, 420.f } });
+	WalkBandY(507.15f, 509.65f, { { -60.f, -10.f }, { 10.f, 306.f }, { 336.f, 420.f } });
 
 	// 信号路口 CS1 两侧
-	WalkBandY(163.15f, 165.65f, { { -80.f, -10.f }, { 10.f, 306.f }, { 334.f, 420.f } });
-	WalkBandY(180.35f, 182.85f, { { -80.f, -10.f }, { 10.f, 306.f }, { 334.f, 420.f } });
+	WalkBandY(161.15f, 163.65f, { { -80.f, -10.f }, { 10.f, 306.f }, { 336.f, 420.f } });
+	WalkBandY(182.35f, 184.85f, { { -80.f, -10.f }, { 10.f, 306.f }, { 336.f, 420.f } });
 
 	// 平交口 CS2 两侧
-	WalkBandY(230.15f, 232.65f, { { 180.f, 306.f }, { 334.f, 420.f } });
-	WalkBandY(247.35f, 249.85f, { { 180.f, 306.f }, { 334.f, 420.f } });
+	WalkBandY(228.15f, 230.65f, { { 180.f, 306.f }, { 336.f, 420.f } });
+	WalkBandY(249.35f, 251.85f, { { 180.f, 306.f }, { 336.f, 420.f } });
 
 	// 转角 C 以东街道两侧
-	WalkBandY(534.f, 664.f, {}); // 占位避免未使用告警
-	WalkwayStrip(FVector2D(534.f, 328.35f), FVector2D(664.f, 330.85f));
-	WalkwayStrip(FVector2D(534.f, 309.15f), FVector2D(664.f, 311.65f));
+	WalkwayStrip(FVector2D(534.f, 325.35f), FVector2D(664.f, 327.85f));
+	WalkwayStrip(FVector2D(534.f, 312.15f), FVector2D(664.f, 314.65f));
 
 	// ---- 北侧连续掉头区及独立返回车道 ----
-	// 掉头中心线 x=370..382、y=320..354，两侧至少保留 3.5m 沥青。
 	AsphaltRect(FVector2D(UTurnMidA.X - RoadHalfWidth, WestToUTurn.Y - RoadHalfWidth),
 		FVector2D(WestToUTurn.X + RoadHalfWidth, ReturnCenterY + RoadHalfWidth));
 	AsphaltRect(FVector2D(ReturnStart.X, ReturnCenterY - RoadHalfWidth),
 		FVector2D(ReturnEnd.X + 6.f, ReturnCenterY + RoadHalfWidth));
-	WalkwayStrip(FVector2D(ReturnStart.X + 5.f, ReturnCenterY + 3.85f),
-		FVector2D(ReturnEnd.X + 6.f, ReturnCenterY + 6.35f));
+	WalkwayStrip(FVector2D(ReturnStart.X + 5.f, ReturnCenterY + RoadHalfWidth + 0.35f),
+		FVector2D(ReturnEnd.X + 6.f, ReturnCenterY + RoadHalfWidth + 2.85f));
 
 	// ---- 主线路缘石 ----
 	auto CurbStripX = [&](float YCenter, const TArray<FRun>& Runs)
@@ -337,15 +344,15 @@ void ARoadBuilder::BuildRoadSurface()
 				FVector(R.B - R.A, 0.34f, 0.18f), ColCurb);
 		}
 	};
-	CurbStripX(3.67f, AbRuns);
-	CurbStripX(-3.67f, AbRuns);
-	CurbStripX(323.67f, CdNorthRuns);
-	CurbStripX(316.33f, CdRuns);
+	CurbStripX(5.17f, AbRuns);                // 东段北侧路缘石
+	CurbStripX(-7.87f, AbRuns);               // 东段南侧路缘石（泊位外沿）
+	CurbStripX(325.17f, CdNorthRuns);         // 西段北侧路缘石
+	CurbStripX(312.03f, CdRuns);              // 西段南侧路缘石（泊位外沿）
 	const TArray<FRun> ReturnRuns = { { static_cast<float>(ReturnStart.X) + 5.f, static_cast<float>(ReturnEnd.X) + 6.f } };
 	CurbStripX(ReturnCenterY + RoadHalfWidth + 0.17f, ReturnRuns);
 	CurbStripX(ReturnCenterY - RoadHalfWidth - 0.17f, ReturnRuns);
-	AddPiece(CubeMesh, FVector(520.f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
-	AddPiece(CubeMesh, FVector(523.67f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
+	AddPiece(CubeMesh, FVector(514.83f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
+	AddPiece(CubeMesh, FVector(527.97f, 163.5f, 0.09f), FVector(0.34f, 285.f, 0.18f), ColCurb);
 }
 
 // ---------------------------------------------------------------------------
@@ -405,21 +412,22 @@ void ARoadBuilder::BuildMarkings()
 	{
 		AddBox(FVector((X1 + X2) * 0.5f, Y, 0.066f), FVector(X2 - X1, 0.14f, 0.03f), ColLineWhite);
 	};
-	// 东段
-	EdgeY(3.5f, -30.f, 160.f);  EdgeY(3.5f, 190.f, 506.f);
-	EdgeY(-3.5f, -30.f, 160.f); EdgeY(-3.5f, 190.f, 506.f);
-	// 北段
-	EdgeX(516.5f, 21.f, 306.f); EdgeX(523.5f, 21.f, 306.f);
-	// 西段
-	EdgeY(316.5f, -30.f, 158.f); EdgeY(316.5f, 190.f, 228.f); EdgeY(316.5f, 252.f, 498.f);
-	EdgeY(323.5f, -30.f, 158.f); EdgeY(323.5f, 190.f, 228.f);
-	EdgeY(323.5f, 252.f, UTurnClearanceMinX); EdgeY(323.5f, UTurnClearanceMaxX, 498.f);
+	// 边缘白色实线（直段长条 + 弯道分段，对应 10m 双向路宽）
+	// 东段（行车道边缘 ±5.0m）
+	EdgeY(5.0f, -30.f, 160.f);  EdgeY(5.0f, 186.f, 506.f);
+	EdgeY(-5.0f, -30.f, 160.f); EdgeY(-5.0f, 186.f, 506.f);
+	// 北段（行车道边缘 515.0m 与 525.0m）
+	EdgeX(515.0f, 21.f, 306.f); EdgeX(525.0f, 21.f, 306.f);
+	// 西段（行车道边缘 315.0m 与 325.0m）
+	EdgeY(315.0f, -30.f, 158.f); EdgeY(315.0f, 186.f, 228.f); EdgeY(315.0f, 252.f, 498.f);
+	EdgeY(325.0f, -30.f, 158.f); EdgeY(325.0f, 186.f, 228.f);
+	EdgeY(325.0f, 252.f, UTurnClearanceMinX); EdgeY(325.0f, UTurnClearanceMaxX, 498.f);
 	// 弯道弧段
 	auto ArcEdges = [&](float FromS, float ToS)
 	{
 		for (float S = FromS; S <= ToS; S += 2.2f)
 		{
-			for (float Lat : { -3.55f, 3.55f })
+			for (float Lat : { -5.05f, 5.05f })
 			{
 				const FVector P = Track.LocAtS(S, Lat);
 				const FVector T = Track.TangentAtS(S);
@@ -434,30 +442,67 @@ void ARoadBuilder::BuildMarkings()
 	EdgeY(ReturnCenterY - RoadHalfWidth, ReturnStart.X, ReturnEnd.X + 6.f);
 	EdgeY(ReturnCenterY + RoadHalfWidth, ReturnStart.X, ReturnEnd.X + 6.f);
 	// 横向街道边缘
-	EdgeX(166.f, -78.f, 418.f); EdgeX(180.f, -78.f, 418.f);
-	EdgeX(512.f, -58.f, 418.f); EdgeX(528.f, -58.f, 418.f);
-	EdgeX(233.f, 182.f, 418.f); EdgeX(247.f, 182.f, 418.f);
-	EdgeY(316.5f, 536.f, 662.f); EdgeY(323.5f, 536.f, 662.f);
+	EdgeX(164.f, -78.f, 418.f); EdgeX(182.f, -78.f, 418.f);
+	EdgeX(510.f, -58.f, 418.f); EdgeX(530.f, -58.f, 418.f);
+	EdgeX(231.f, 182.f, 418.f); EdgeX(249.f, 182.f, 418.f);
+	EdgeY(315.0f, 536.f, 662.f); EdgeY(325.0f, 536.f, 662.f);
 
-	// ---- 起点线 ----
-	AddBox(FVector(StartPose.X, 0.f, 0.070f), FVector(0.35f, 7.f, 0.04f), ColLineWhite);
+	// ---- 路侧专用沥青停车泊位标线（白色规范泊位方格框）----
+	auto PaintParkingBayX = [&](float XCenter, float YCenter, float Length = 6.0f, float Width = 2.4f)
+	{
+		const float HalfL = Length * 0.5f;
+		const float HalfW = Width * 0.5f;
+		// 前后界线
+		AddBox(FVector(XCenter - HalfL, YCenter, 0.068f), FVector(0.12f, Width, 0.03f), ColLineWhite);
+		AddBox(FVector(XCenter + HalfL, YCenter, 0.068f), FVector(0.12f, Width, 0.03f), ColLineWhite);
+		// 外侧界线（与路缘石留出安全余量）
+		AddBox(FVector(XCenter, YCenter - HalfW, 0.068f), FVector(Length, 0.12f, 0.03f), ColLineWhite);
+	};
+	auto PaintParkingBayY = [&](float XCenter, float YCenter, float Length = 6.0f, float Width = 2.4f)
+	{
+		const float HalfL = Length * 0.5f;
+		const float HalfW = Width * 0.5f;
+		AddBox(FVector(XCenter, YCenter - HalfL, 0.068f), FVector(Width, 0.12f, 0.03f), ColLineWhite);
+		AddBox(FVector(XCenter, YCenter + HalfL, 0.068f), FVector(Width, 0.12f, 0.03f), ColLineWhite);
+		AddBox(FVector(XCenter + HalfW, YCenter, 0.068f), FVector(0.12f, Length, 0.03f), ColLineWhite);
+	};
 
-	// ---- 信号路口：停止线 + 斑马线 ----
-	AddBox(FVector(160.f, 1.78f, 0.070f), FVector(0.32f, 3.35f, 0.04f), ColLineWhite);   // 东行停止线
-	AddBox(FVector(186.f, -1.78f, 0.070f), FVector(0.32f, 3.35f, 0.04f), ColLineWhite);  // 西行停止线
-	PaintZebra(FVector(163.4f, 0.f, 0.075f), 0.f, 3.3f);
-	PaintZebra(FVector(183.4f, 0.f, 0.075f), 180.f, 3.3f);
+	// 西段商住楼前规范停车泊位（正是用户截图位置）
+	PaintParkingBayX(470.f, 313.6f);
+	PaintParkingBayX(448.f, 313.6f);
+	PaintParkingBayX(280.f, 313.6f);
+
+	// 东段路侧规范停车泊位
+	PaintParkingBayX(45.f, -6.4f);
+	PaintParkingBayX(62.f, -6.4f);
+	PaintParkingBayX(240.f, -6.4f);
+	PaintParkingBayX(255.f, -6.4f);
+	PaintParkingBayX(305.f, -6.4f);
+	PaintParkingBayX(320.f, -6.4f);
+
+	// 北段路侧规范停车泊位
+	PaintParkingBayY(526.4f, 85.f);
+	PaintParkingBayY(526.4f, 160.f);
+
+	// ---- 起点线（覆盖 10m 全路宽）----
+	AddBox(FVector(StartPose.X, 0.f, 0.070f), FVector(0.35f, 10.f, 0.04f), ColLineWhite);
+
+	// ---- 信号路口：停止线 + 斑马线（覆盖 5m 单车道）----
+	AddBox(FVector(160.f, 2.5f, 0.070f), FVector(0.32f, 4.8f, 0.04f), ColLineWhite);   // 东行停止线
+	AddBox(FVector(186.f, -2.5f, 0.070f), FVector(0.32f, 4.8f, 0.04f), ColLineWhite);  // 西行停止线
+	PaintZebra(FVector(163.4f, 0.f, 0.075f), 0.f, 4.8f);
+	PaintZebra(FVector(183.4f, 0.f, 0.075f), 180.f, 4.8f);
 
 	// ---- 平交口 CS2：西段西行停止线 + 斑马线 ----
-	AddBox(FVector(251.f, 318.25f, 0.070f), FVector(0.3f, 3.3f, 0.04f), ColLineWhite);
-	PaintZebra(FVector(230.6f, 320.f, 0.075f), 0.f, 3.2f);
-	PaintZebra(FVector(249.4f, 320.f, 0.075f), 180.f, 3.2f);
+	AddBox(FVector(251.f, 322.5f, 0.070f), FVector(0.3f, 4.8f, 0.04f), ColLineWhite);
+	PaintZebra(FVector(230.6f, 320.f, 0.075f), 0.f, 4.8f);
+	PaintZebra(FVector(249.4f, 320.f, 0.075f), 180.f, 4.8f);
 
-	// ---- 导向箭头 ----
-	PaintArrow(FVector(140.f, 1.75f, 0.068f), 0.f);      // 东段直行
-	PaintArrow(FVector(518.25f, 120.f, 0.068f), 90.f);   // 北段直行
-	PaintArrow(FVector(450.f, 318.25f, 0.068f), 180.f);  // 西段直行
-	PaintArrow(FVector(400.f, 318.25f, 0.068f), 180.f);  // 掉头区前
+	// ---- 导向箭头（居于各路段 5m 车道中央）----
+	PaintArrow(FVector(140.f, 2.5f, 0.068f), 0.f);      // 东段直行
+	PaintArrow(FVector(522.5f, 120.f, 0.068f), 90.f);   // 北段直行
+	PaintArrow(FVector(450.f, 322.5f, 0.068f), 180.f);  // 西段直行
+	PaintArrow(FVector(400.f, 322.5f, 0.068f), 180.f);  // 掉头区前
 
 	// ---- 靠边停车区：实际路缘石内沿、车辆半宽与评分距离使用同一参数 ----
 	const float ParkingFromX = ReturnStart.X + (PullOverMinS - ReturnStartS);
@@ -470,7 +515,7 @@ void ARoadBuilder::BuildMarkings()
 		FVector(ParkingLength, 0.07f, 0.03f), FLinearColor(0.92f, 0.3f, 0.25f));
 	for (float X : { ParkingFromX, ParkingToX })
 	{
-		AddBox(FVector(X, ReturnCenterY + 1.8f, 0.072f), FVector(0.14f, 3.2f, 0.03f), ColLineWhite);
+		AddBox(FVector(X, ReturnCenterY + 2.5f, 0.072f), FVector(0.14f, 4.8f, 0.03f), ColLineWhite);
 	}
 	for (float S : { (UTurnEntryS + UTurnArc1EndS) * 0.5f,
 		(UTurnArc1EndS + UTurnStraightEndS) * 0.5f,
@@ -533,46 +578,46 @@ void ARoadBuilder::MakeStreetLamp(const FVector& BasePos, float ArmYawDeg)
 void ARoadBuilder::BuildZoneFacilities()
 {
 	PieceLayerZ = 0.0f; // Facilities use their own Z in FVector
-	// 限速 60 标志（起点前方）
-	AddCylinder(FVector(30.f, 6.9f, 1.7f), FVector(0.16f, 0.16f, 3.4f), FLinearColor(0.4f, 0.4f, 0.43f));
-	AddCylinder(FVector(30.f, 6.9f, 3.85f), FVector(1.36f, 1.36f, 0.08f), FLinearColor(0.85f, 0.12f, 0.1f), FRotator(90.f, 0.f, 0.f));
-	AddCylinder(FVector(29.93f, 6.9f, 3.85f), FVector(1.12f, 1.12f, 0.06f), FLinearColor(0.95f, 0.95f, 0.92f), FRotator(90.f, 0.f, 0.f));
+	// 限速 60 标志（起点前方，人行道外缘）
+	AddCylinder(FVector(30.f, 7.2f, 1.7f), FVector(0.16f, 0.16f, 3.4f), FLinearColor(0.4f, 0.4f, 0.43f));
+	AddCylinder(FVector(30.f, 7.2f, 3.85f), FVector(1.36f, 1.36f, 0.08f), FLinearColor(0.85f, 0.12f, 0.1f), FRotator(90.f, 0.f, 0.f));
+	AddCylinder(FVector(29.93f, 7.2f, 3.85f), FVector(1.12f, 1.12f, 0.06f), FLinearColor(0.95f, 0.95f, 0.92f), FRotator(90.f, 0.f, 0.f));
 
-	// 学校区域提示牌 + 减速标线
-	PoleWithPlate(FVector(206.f, 6.9f, 0.f), 180.f, FLinearColor(0.10f, 0.32f, 0.85f));
+	// 学校区域提示牌 + 减速标线（覆盖 5m 东行车道）
+	PoleWithPlate(FVector(206.f, 7.2f, 0.f), 180.f, FLinearColor(0.10f, 0.32f, 0.85f));
 	for (float BarX : { 212.f, 215.f })
 	{
-		AddBox(FVector(BarX, 1.95f, 0.068f), FVector(0.24f, 2.9f, 0.03f), ColLineYellow);
+		AddBox(FVector(BarX, 2.5f, 0.068f), FVector(0.24f, 4.2f, 0.03f), ColLineYellow);
 	}
 
 	// 人行横道警示牌
-	PoleWithPlate(FVector(152.f, 6.9f, 0.f), 180.f, FLinearColor(0.95f, 0.78f, 0.1f));
+	PoleWithPlate(FVector(152.f, 7.2f, 0.f), 180.f, FLinearColor(0.95f, 0.78f, 0.1f));
 
-	// 公交车站：站牌 + 雨棚 + 候车亭 + 停靠公交
-	PoleWithPlate(FVector(268.f, 6.9f, 0.f), 180.f, FLinearColor(0.08f, 0.55f, 0.25f));
-	AddBox(FVector(282.f, 7.35f, 1.15f), FVector(5.0f, 0.25f, 2.3f), FLinearColor(0.72f, 0.74f, 0.78f));
-	AddBox(FVector(282.f, 6.55f, 2.52f), FVector(5.6f, 1.9f, 0.12f), FLinearColor(0.35f, 0.4f, 0.46f));
-	AddBox(FVector(282.f, 6.6f, 0.45f), FVector(4.0f, 0.45f, 0.5f), FLinearColor(0.55f, 0.4f, 0.28f));
-	// 公交车
-	AddBox(FVector(290.f, 5.55f, 0.32f), FVector(10.5f, 2.2f, 0.5f), FLinearColor(0.1f, 0.1f, 0.12f));
-	AddBox(FVector(290.f, 5.55f, 1.48f), FVector(10.5f, 2.5f, 2.85f), FLinearColor(0.16f, 0.5f, 0.56f));
-	AddBox(FVector(290.f, 5.54f, 2.4f), FVector(10.56f, 2.54f, 0.72f), FLinearColor(0.1f, 0.14f, 0.18f));
+	// 公交车站：站牌 + 雨棚 + 候车亭 + 停靠公交（规范停靠在北侧外延专用候车岛）
+	PoleWithPlate(FVector(268.f, 7.6f, 0.f), 180.f, FLinearColor(0.08f, 0.55f, 0.25f));
+	AddBox(FVector(282.f, 8.35f, 1.15f), FVector(5.0f, 0.25f, 2.3f), FLinearColor(0.72f, 0.74f, 0.78f));
+	AddBox(FVector(282.f, 7.55f, 2.52f), FVector(5.6f, 1.9f, 0.12f), FLinearColor(0.35f, 0.4f, 0.46f));
+	AddBox(FVector(282.f, 7.6f, 0.45f), FVector(4.0f, 0.45f, 0.5f), FLinearColor(0.55f, 0.4f, 0.28f));
+	// 公交车（停在 6.8m 停靠带）
+	AddBox(FVector(290.f, 6.8f, 0.32f), FVector(10.5f, 2.2f, 0.5f), FLinearColor(0.1f, 0.1f, 0.12f));
+	AddBox(FVector(290.f, 6.8f, 1.48f), FVector(10.5f, 2.5f, 2.85f), FLinearColor(0.16f, 0.5f, 0.56f));
+	AddBox(FVector(290.f, 6.79f, 2.4f), FVector(10.56f, 2.54f, 0.72f), FLinearColor(0.1f, 0.14f, 0.18f));
 
-	// 加减挡操作区提示牌（西段）
-	PoleWithPlate(FVector(486.f, 313.8f, 0.f), 0.f, FLinearColor(0.85f, 0.45f, 0.08f));
+	// 加减挡操作区提示牌（西段北侧人行道外缘，面向西行学员）
+	PoleWithPlate(FVector(486.f, 326.6f, 0.f), 0.f, FLinearColor(0.85f, 0.45f, 0.08f));
 
 	// 掉头区提示牌
-	PoleWithPlate(FVector(392.f, 313.8f, 0.f), 0.f, FLinearColor(0.12f, 0.35f, 0.8f));
+	PoleWithPlate(FVector(392.f, 326.6f, 0.f), 0.f, FLinearColor(0.12f, 0.35f, 0.8f));
 
-	// 起点龙门架
-	AddCylinder(FVector(0.f, 5.6f, 2.8f), FVector(0.24f, 0.24f, 5.6f), FLinearColor(0.35f, 0.36f, 0.4f));
-	AddCylinder(FVector(0.f, -5.6f, 2.8f), FVector(0.24f, 0.24f, 5.6f), FLinearColor(0.35f, 0.36f, 0.4f));
-	AddBox(FVector(0.f, 0.f, 5.45f), FVector(0.5f, 11.6f, 0.5f), FLinearColor(0.88f, 0.88f, 0.9f));
-	AddBox(FVector(0.f, 0.f, 4.75f), FVector(0.12f, 4.5f, 1.05f), FLinearColor(0.12f, 0.3f, 0.75f));
+	// 起点龙门架（跨度拓宽至 14.6m，横跨 10m 拓宽主干道）
+	AddCylinder(FVector(0.f, 7.0f, 2.8f), FVector(0.24f, 0.24f, 5.6f), FLinearColor(0.35f, 0.36f, 0.4f));
+	AddCylinder(FVector(0.f, -7.0f, 2.8f), FVector(0.24f, 0.24f, 5.6f), FLinearColor(0.35f, 0.36f, 0.4f));
+	AddBox(FVector(0.f, 0.f, 5.45f), FVector(0.5f, 14.6f, 0.5f), FLinearColor(0.88f, 0.88f, 0.9f));
+	AddBox(FVector(0.f, 0.f, 4.75f), FVector(0.12f, 5.5f, 1.05f), FLinearColor(0.12f, 0.3f, 0.75f));
 }
 
 // ---------------------------------------------------------------------------
-// 路灯与行道树
+// 路灯与行道树（完整避让停车泊位与行车道，严禁穿车）
 // ---------------------------------------------------------------------------
 void ARoadBuilder::BuildStreetFurniture()
 {
@@ -597,11 +642,11 @@ void ARoadBuilder::BuildStreetFurniture()
 
 		const FVector T = Track.TangentAtS(S);
 		const FVector2D D = LateralDir(T);
-		const float Yaw = FMath::RadiansToDegrees(FMath::Atan2(T.Y, T.X));
 
 		if (bLampSpot)
 		{
-			const float Side = (LampIdx % 2 == 0) ? 5.7f : -5.7f;
+			// 路灯置于路缘石与人行道内侧（左侧 5.4m，右侧泊位区外沿 8.2m）
+			const float Side = (LampIdx % 2 == 0) ? 5.4f : -8.2f;
 			const FVector Base = Track.LocAtS(S, Side);
 			// 灯臂指向道路中心
 			const float ArmYaw = FMath::RadiansToDegrees(FMath::Atan2(-FMath::Sign(Side) * D.Y, -FMath::Sign(Side) * D.X));
@@ -611,8 +656,9 @@ void ARoadBuilder::BuildStreetFurniture()
 		if (bTreeSpot)
 		{
 			const float JitterMul = 0.85f + static_cast<float>((TreeIdx * 37) % 40) / 100.f;
-			MakeTree(Track.LocAtS(S, 7.6f), JitterMul);
-			MakeTree(Track.LocAtS(S, -7.6f), JitterMul * 0.9f + 0.2f);
+			// 行道树退后到人行道外侧绿化带（左侧 9.2m，右侧停车泊位及人行道外侧 11.6m，严防穿车）
+			MakeTree(Track.LocAtS(S, 9.2f), JitterMul);
+			MakeTree(Track.LocAtS(S, -11.6f), JitterMul * 0.9f + 0.2f);
 			++TreeIdx;
 		}
 	}

@@ -9,6 +9,7 @@
 class USpringArmComponent;
 class UCameraComponent;
 class UStaticMeshComponent;
+class UBoxComponent;
 class UMaterialInstanceDynamic;
 class USceneCaptureComponent2D;
 class UTextureRenderTarget2D;
@@ -106,6 +107,7 @@ public:
 	void SetTestPose(const FVector& LocCm, const FRotator& Rot)
 	{
 		SetActorLocationAndRotation(LocCm, Rot, false, nullptr, ETeleportType::TeleportPhysics);
+		ForceStop();
 		YawDeg = Rot.Yaw;
 		SpeedMs = 0.f;
 		ThrottleInput = 0.f;
@@ -124,7 +126,14 @@ protected:
 
 	// ---- 视觉组件 ----
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
-	USceneComponent* Root = nullptr;
+	UBoxComponent* Root = nullptr;
+public:
+ UBoxComponent* GetPhysicsBody() const { return Root; }
+ float GetLastVehicleHitTime() const { return LastVehicleHitTime; }
+protected:
+ float LastVehicleHitTime=-1000.f;
+ UFUNCTION() void OnVehicleHit(UPrimitiveComponent* HitComponent,AActor* OtherActor,UPrimitiveComponent* OtherComponent,FVector NormalImpulse,const FHitResult& Hit);
+ void ApplyPhysicalDrive(float Dt,float BeforeSpeed,float DesiredYawRate);
 
 	UPROPERTY(VisibleAnywhere, Category = "Vehicle")
 	UStaticMeshComponent* Body = nullptr;

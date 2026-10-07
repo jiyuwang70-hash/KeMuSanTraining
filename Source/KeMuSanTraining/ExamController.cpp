@@ -1513,7 +1513,7 @@ void AExamController::MonitorGeneral(float DT)
 		if (Phase == EExamPhase::Driving || Phase == EExamPhase::PullOver)
 		{
 			const FVector CarLocM = Car->GetActorLocation() * 0.01f;
-			if (Traffic && Traffic->HitsPlayer(CarLocM, CarYawDeg()))
+			if (Traffic && (Traffic->HitsPlayer(CarLocM, CarYawDeg()) || GetWorld()->GetTimeSeconds()-Car->GetLastVehicleHitTime()<.5f))
 			{
 				FailExam(TEXT("与机动车发生碰撞"));
 				return;
@@ -1605,7 +1605,7 @@ void AExamController::MonitorGeneral(float DT)
 
 		// 驶出路面（离中心线过远或完全脱离路网）
 		const bool bOffRoad = CurDistSq > 64.f ||
-			(bCurAligned && FMath::Abs(CurLat) > CurbDistance + 1.0f);
+			(bCurAligned && FMath::Abs(CurLat) > RoadHalfWidth + CarHalfWidth);
 		if (bOffRoad)
 		{
 			FailExam(TEXT("驶出路面"));

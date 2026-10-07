@@ -17,7 +17,8 @@ public class KeMuSanTraining : ModuleRules
 			"SlateCore",
 			"UMG",
 			"Json",
-			"JsonUtilities"
+			"JsonUtilities",
+            "PhysicsCore"
 		});
 	}
 }

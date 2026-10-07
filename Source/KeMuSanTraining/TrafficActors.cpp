@@ -1,4 +1,8 @@
 #include "TrafficActors.h"
+#include "KeMuSanPawn.h"
+#include "GameFramework/PlayerController.h"
+#include "Components/BoxComponent.h"
+#include "VehiclePhysicsCore.h"
 
 #include "Components/StaticMeshComponent.h"
 #include "Materials/MaterialInstanceDynamic.h"
@@ -11,11 +15,15 @@
 // ---------------------------------------------------------------------------
 AAICar::AAICar()
 {
-	PrimaryActorTick.bCanEverTick = false;
-	SetActorEnableCollision(false);
+	PrimaryActorTick.bCanEverTick = true;
+	SetActorEnableCollision(true);
 	SetActorHiddenInGame(true);
 
-	USceneComponent* Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	PhysicsBody=CreateDefaultSubobject<UBoxComponent>(TEXT("Root"));
+ UBoxComponent* Root=PhysicsBody;
+ VehiclePhysics::Configure(Root,FVector(230,98,95),1500.f);
+ Root->OnComponentHit.AddDynamic(this,&AAICar::OnVehicleHit);
+ Root->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	SetRootComponent(Root);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeAsset(TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -97,42 +105,35 @@ AAICar::AAICar()
 	MakePart(TEXT("TailR"), CubeAsset.Object, FVector(-211.f, -60.f, 72.f), FVector(0.10f, 0.30f, 0.14f), FLinearColor(0.6f, 0.04f, 0.03f));
 }
 
-void AAICar::InitRoute(const FVector& InStart, const FVector& InEnd, float InSpeedKmh)
+void AAICar::InitRoute(const FVector& InStart,const FVector& InEnd,float InSpeedKmh)
 {
-	StartLoc = InStart;
-	EndLoc = InEnd;
-	SpeedMs = InSpeedKmh / 3.6f;
-	bRouteMode = true;
-	bActive = true;
-	SetActorLocation(InStart * 100.f);
-	SetActorHiddenInGame(false);
-	const FVector Dir = (EndLoc - StartLoc).GetSafeNormal();
-	SetActorRotation(Dir.Rotation());
+ Activate(InSpeedKmh);
+ const FVector Direction=(InEnd-InStart).GetSafeNormal();
+ SetPose(InStart,FMath::RadiansToDegrees(FMath::Atan2(Direction.Y,Direction.X)));
+ EndLoc=InEnd*100.f;StartLoc=InStart*100.f;
+ TargetPosition=EndLoc;bRouteMode=true;
 }
 
-void AAICar::Tick(float DeltaSeconds)
+void AAICar::Tick(float Dt)
 {
-	Super::Tick(DeltaSeconds);
-	if (!bActive || !bRouteMode)
-	{
-		return;
-	}
-
-	const FVector Dir = (EndLoc - StartLoc).GetSafeNormal();
-	const FVector NewLoc = GetActorLocation() + Dir * (SpeedMs * 100.f) * DeltaSeconds;
-	SetActorLocation(NewLoc);
-
-	const float Traveled = FVector::Dist(StartLoc * 100.f, NewLoc);
-	if (Traveled >= FVector::Dist(StartLoc * 100.f, EndLoc * 100.f))
-	{
-		bActive = false;
-		bRouteMode = false;
-		SetActorHiddenInGame(true);
-	}
+ Super::Tick(Dt);
+ if(!bActive||!PhysicsBody->IsSimulatingPhysics())return;
+ const FVector Forward=GetActorForwardVector();
+ const float Speed=FVector::DotProduct(PhysicsBody->GetPhysicsLinearVelocity(),Forward)*.01f;
+ const float Error=FMath::FindDeltaAngleDegrees(GetActorRotation().Yaw,TargetYaw);
+ const FVector Delta=TargetPosition-GetActorLocation();
+ const float Correction=SpeedMs>.01f?FMath::Clamp(FVector::DotProduct(Delta,Forward)*.01f,-2.f,2.f):0.f;
+ const float Accel=FMath::Clamp((SpeedMs+Correction-Speed)*2.f,-8.f,2.f);
+ const bool Recovering=GetWorld()->GetTimeSeconds()-LastHitTime<1.f;
+ VehiclePhysics::Drive(PhysicsBody,Recovering?0.f:Accel,Recovering?PhysicsBody->GetPhysicsAngularVelocityInRadians().Z:FMath::DegreesToRadians(Error)*2.f,Dt,!Recovering);
+ if(!Recovering)PhysicsBody->AddForce(GetActorRightVector()*FMath::Clamp(FVector::DotProduct(Delta,GetActorRightVector())*2.f,-150.f,150.f)*PhysicsBody->GetMass());
+ if(bRouteMode && FVector::Dist2D(GetActorLocation(),EndLoc)<250.f)Deactivate();
 }
 
 void AAICar::Activate(float InSpeedKmh)
 {
+ bNeedsTeleport=true;
+ LastHitTime=-1000.f;
 	bActive = true;
 	bRouteMode = false;
 	SpeedMs = InSpeedKmh / 3.6f;
@@ -141,14 +142,58 @@ void AAICar::Activate(float InSpeedKmh)
 
 void AAICar::Deactivate()
 {
+ PhysicsBody->SetSimulatePhysics(false);
+ PhysicsBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
 	bActive = false;
 	bRouteMode = false;
 	SetActorHiddenInGame(true);
 }
 
-void AAICar::SetPose(const FVector& Pos, float YawDeg)
+void AAICar::SetPose(const FVector& Pos,float Yaw)
 {
-	SetActorLocationAndRotation(Pos * 100.f, FRotator(0.f, YawDeg, 0.f), false);
+ TargetPosition=Pos*100.f;TargetYaw=Yaw;
+ if(bNeedsTeleport)
+ {
+  SetActorLocationAndRotation(TargetPosition,FRotator(0,Yaw,0),false,nullptr,ETeleportType::TeleportPhysics);
+  PhysicsBody->SetCollisionEnabled(ECollisionEnabled::QueryAndPhysics);
+  PhysicsBody->SetSimulatePhysics(true);
+  PhysicsBody->SetPhysicsLinearVelocity(FVector::ZeroVector);
+  PhysicsBody->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
+  bNeedsTeleport=false;
+ }
+}
+
+void AAICar::OnVehicleHit(UPrimitiveComponent*,AActor*,UPrimitiveComponent*,FVector Impulse,const FHitResult&)
+{
+ if(Impulse.Size()>100.f)LastHitTime=GetWorld()->GetTimeSeconds();
+}
+
+void AAICar::MakeHeavyTruck()
+{
+ bHeavyTruck=true;
+ TArray<UStaticMeshComponent*> Parts;GetComponents(Parts);
+ for(UStaticMeshComponent* Part:Parts)Part->SetVisibility(false);
+ UStaticMesh* Cube=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cube.Cube"));
+ UStaticMesh* Cylinder=LoadObject<UStaticMesh>(nullptr,TEXT("/Engine/BasicShapes/Cylinder.Cylinder"));
+ UMaterial* Material=LoadObject<UMaterial>(nullptr,TEXT("/Engine/BasicShapes/BasicShapeMaterial.BasicShapeMaterial"));
+ auto Part=[&](const FVector& Position,const FVector& Scale,FLinearColor Color,bool Wheel=false)
+ {
+  UStaticMeshComponent* Mesh=NewObject<UStaticMeshComponent>(this);
+  Mesh->SetStaticMesh(Wheel?Cylinder:Cube);Mesh->SetupAttachment(PhysicsBody);
+  Mesh->SetRelativeLocation(Position);Mesh->SetRelativeScale3D(Scale);
+  if(Wheel)Mesh->SetRelativeRotation(FRotator(0,0,90));
+  Mesh->SetCollisionEnabled(ECollisionEnabled::NoCollision);Mesh->RegisterComponent();
+  auto* Dyn=UMaterialInstanceDynamic::Create(Material,this);Dyn->SetVectorParameterValue(TEXT("Color"),Color);Mesh->SetMaterial(0,Dyn);
+ };
+ Part(FVector(0,0,75),FVector(8.8,2.3,.3),FLinearColor(.08,.09,.1));
+ Part(FVector(325,0,150),FVector(2.4,2.4,2.3),FLinearColor(.12,.3,.65));
+ Part(FVector(447,0,195),FVector(.04,2.05,.7),FLinearColor(.03,.06,.09));
+ Part(FVector(-115,0,185),FVector(6.3,2.45,2.1),FLinearColor(.65,.31,.12));
+ Part(FVector(450,0,95),FVector(.1,2.2,.2),FLinearColor(.7,.72,.75));
+ for(float X:{320.f,-180.f,-325.f})for(float Y:{-118.f,118.f})Part(FVector(X,Y,44),FVector(.88,.88,.28),FLinearColor(.04,.04,.05),true);
+ VehiclePhysics::Configure(PhysicsBody,FVector(450,125,160),14000.f);
+ if(!bActive)PhysicsBody->SetCollisionEnabled(ECollisionEnabled::NoCollision);
+ UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysics] heavy_truck mass=14000 length=9 width=2.5 name=%s"),*GetName());
 }
 
 // ---------------------------------------------------------------------------
@@ -476,7 +521,7 @@ void ATrafficManager::Setup(const FRouteTrack* InTrack)
 		for (int32 i = 0; i < 28; ++i) // 扩充环境社会车辆池至28辆，支撑复杂车水马龙路况
 		{
 			AAICar* Car = GetWorld()->SpawnActor<AAICar>(FVector(0.f, 0.f, -100.f), FRotator::ZeroRotator, Params);
-			if (Car) { CarPool.Add(Car); }
+			if (Car) { if(i%6==0)Car->MakeHeavyTruck(); CarPool.Add(Car); }
 		}
 		for (int32 i = 0; i < 8; ++i) // 扩充自行车至8辆
 		{
@@ -494,17 +539,17 @@ void ATrafficManager::Setup(const FRouteTrack* InTrack)
 			if (P) { P->Activate(0.f); P->SetPose(Pos, Yaw); ParkedCars.Add(P); }
 		};
 		using namespace RoadLayout;
-		SpawnParked(FVector(45.f, -7.2f, 0.25f), 0.f);      // 起点东段商铺前
-		SpawnParked(FVector(62.f, -7.2f, 0.25f), 0.f);
-		SpawnParked(FVector(240.f, -7.2f, 0.25f), 0.f);     // 学校区域南侧泊位
-		SpawnParked(FVector(255.f, -7.2f, 0.25f), 0.f);
-		SpawnParked(FVector(305.f, -7.2f, 0.25f), 0.f);     // 公交车站后方泊位
-		SpawnParked(FVector(320.f, -7.2f, 0.25f), 0.f);
-		SpawnParked(FVector(527.2f, 85.f, 0.25f), 90.f);    // 北段路侧停放车
-		SpawnParked(FVector(527.2f, 160.f, 0.25f), 90.f);
-		SpawnParked(FVector(470.f, 313.8f, 0.25f), 180.f);  // 西段商住楼前
-		SpawnParked(FVector(448.f, 313.8f, 0.25f), 180.f);
-		SpawnParked(FVector(280.f, 313.8f, 0.25f), 180.f);
+		SpawnParked(FVector(45.f, -6.4f, 0.25f), 0.f);      // 起点东段商铺前
+		SpawnParked(FVector(62.f, -6.4f, 0.25f), 0.f);
+		SpawnParked(FVector(240.f, -6.4f, 0.25f), 0.f);     // 学校区域南侧泊位
+		SpawnParked(FVector(255.f, -6.4f, 0.25f), 0.f);
+		SpawnParked(FVector(305.f, -6.4f, 0.25f), 0.f);     // 公交车站后方泊位
+		SpawnParked(FVector(320.f, -6.4f, 0.25f), 0.f);
+		SpawnParked(FVector(526.4f, 85.f, 0.25f), 90.f);    // 北段路侧停放车
+		SpawnParked(FVector(526.4f, 160.f, 0.25f), 90.f);
+		SpawnParked(FVector(470.f, 313.6f, 0.25f), 180.f);  // 西段商住楼前
+		SpawnParked(FVector(448.f, 313.6f, 0.25f), 180.f);
+		SpawnParked(FVector(280.f, 313.6f, 0.25f), 180.f);
 
 		CrosserFrom = FVector(CrossStreet1X, -70.f, 0.25f);
 		CrosserTo = FVector(CrossStreet1X, 150.f, 0.25f);
@@ -783,7 +828,7 @@ void ATrafficManager::TrySpawnScenarioTraffic()
 		// 起点附近路侧顺行自行车（增强复杂交通参与者交互）
 		if (BikePool.Num() > 0 && BikePool[0] && !BikePool[0]->IsActive())
 		{
-			const FVector BikePos = Track->LocAtS(22.f, -(RoadLayout::CurbDistance + 0.8f));
+			const FVector BikePos = Track->LocAtS(22.f, -(RoadLayout::RoadHalfWidth - .5f));
 			const FVector BikeTan = Track->TangentAtS(22.f);
 			BikePool[0]->Activate(BikePos, FMath::RadiansToDegrees(FMath::Atan2(BikeTan.Y, BikeTan.X)), 4.0f);
 		}
@@ -948,7 +993,8 @@ void ATrafficManager::TickAmbient(float DT)
 		}
 
 		A.Car->SetSpeedMs(TargetMs);
-		A.S += A.Dir * TargetMs * DT;
+		A.S=Track->Project(A.Car->GetActorLocation()*.01f,A.Car->GetActorForwardVector()*static_cast<float>(A.Dir)).S;
+ A.S += A.Dir * TargetMs * DT;
 
 		const FVector Pos = Track->LocAtS(A.S, A.Dir > 0 ? LatOffset : -LatOffset);
 		const FVector Tangent = Track->TangentAtS(A.S) * static_cast<float>(A.Dir);
@@ -966,8 +1012,10 @@ void ATrafficManager::TickScripted(float DT)
 		{
 			continue;
 		}
-		const float TargetMs = A.bYielding ? 0.f : FMath::Max(0.f, A.Car->GetSpeedMs());
-		A.S += A.Dir * TargetMs * DT;
+		const float TargetMs = A.bYielding ? 0.f : A.CruiseMs;
+ A.Car->SetSpeedMs(TargetMs);
+		A.S=Track->Project(A.Car->GetActorLocation()*.01f,A.Car->GetActorForwardVector()*static_cast<float>(A.Dir)).S;
+ A.S += A.Dir * TargetMs * DT;
 		const FVector Pos = Track->LocAtS(A.S, A.Dir > 0 ? RoadLayout::LaneWidth * 0.5f : -RoadLayout::LaneWidth * 0.5f);
 		const FVector Tangent = Track->TangentAtS(A.S) * static_cast<float>(A.Dir);
 		A.Car->SetPose(Pos, YawOfTangent(Tangent));
@@ -987,7 +1035,10 @@ void ATrafficManager::TickScripted(float DT)
 		{
 			continue;
 		}
-		A.S += A.Dir * FMath::Max(0.f, A.Car->GetSpeedMs()) * DT;
+		const float TargetMs=A.bYielding?0.f:A.CruiseMs;
+ A.Car->SetSpeedMs(TargetMs);
+ A.S=Track->Project(A.Car->GetActorLocation()*.01f,A.Car->GetActorForwardVector()*static_cast<float>(A.Dir)).S;
+ A.S += A.Dir * TargetMs * DT;
 		const FVector Pos = Track->LocAtS(A.S, RoadLayout::LaneWidth * 0.5f);
 		const FVector Tangent = Track->TangentAtS(A.S);
 		A.Car->SetPose(Pos, YawOfTangent(Tangent));
@@ -1132,39 +1183,11 @@ void ATrafficManager::ApplyVehiclePolicy(float DT)
 	}
 }
 
-bool ATrafficManager::HitsPlayer(const FVector& InPlayerPos, float PlayerYawDeg) const
+bool ATrafficManager::HitsPlayer(const FVector&,float) const
 {
-	constexpr float HL = 2.15f;
-	constexpr float HW = 0.98f;
-
-	auto CheckOne = [&](const AAICar* Car) -> bool
-	{
-		return Car && Car->IsActive() && !Car->IsHidden() &&
-			BoxesOverlap(InPlayerPos, PlayerYawDeg, Car->GetActorLocation() * 0.01f, Car->GetHeadingDeg(), HL, HW, HL, HW);
-	};
-
-	if (CheckOne(MeetingCar) || CheckOne(SlowCar))
-	{
-		return true;
-	}
-	for (const FAmbientCar& A : Ambients)
-	{
-		if (CheckOne(A.Car))
-		{
-			return true;
-		}
-	}
-	// 横向车流
-	if (CheckOne(Crosser))
-	{
-		return true;
-	}
-	// 路边停车
-	for (AAICar* Parked : ParkedCars)
-	{
-		if (CheckOne(Parked)) return true;
-	}
-	return false;
+ const APlayerController* PC=GetWorld()->GetFirstPlayerController();
+ const AKeMuSanPawn* Player=PC?Cast<AKeMuSanPawn>(PC->GetPawn()):nullptr;
+ return Player && GetWorld()->GetTimeSeconds()-Player->GetLastVehicleHitTime()<.5f;
 }
 
 bool ATrafficManager::HitsPedestrian(const FVector& InPlayerPos) const
@@ -1243,7 +1266,7 @@ void ATrafficManager::TrySpawnBike(float DT)
 			const float S = PlayerS + ScenarioRandom.FRandRange(40.f, 200.f);
 			if (S < 20.f || S > Track->TotalLength() - 20.f) return;
 
-			const FVector Pos = Track->LocAtS(S, SideMul * (RoadLayout::CurbDistance + 0.8f));
+			const FVector Pos = Track->LocAtS(S, SideMul * (RoadLayout::RoadHalfWidth - .5f));
 			const FVector Tan = Track->TangentAtS(S) * ((ScenarioRandom.FRand() < 0.5f) ? 1.f : -1.f);
 			B->Activate(Pos, FMath::RadiansToDegrees(FMath::Atan2(Tan.Y, Tan.X)), 4.5f + ScenarioRandom.FRandRange(0.f, 3.f));
 			break;

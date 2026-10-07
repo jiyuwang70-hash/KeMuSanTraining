@@ -1,4 +1,6 @@
 #include "KeMuSanPawn.h"
+#include "Components/BoxComponent.h"
+#include "VehiclePhysicsCore.h"
 
 #include "Camera/CameraComponent.h"
 #include "Components/SceneCaptureComponent2D.h"
@@ -27,9 +29,11 @@ namespace
 AKeMuSanPawn::AKeMuSanPawn()
 {
 	PrimaryActorTick.bCanEverTick = true;
-	SetActorEnableCollision(false);
+	SetActorEnableCollision(true);
 
-	Root = CreateDefaultSubobject<USceneComponent>(TEXT("Root"));
+	Root = CreateDefaultSubobject<UBoxComponent>(TEXT("Root"));
+ VehiclePhysics::Configure(Root,FVector(215,98,95),1400.f);
+ Root->OnComponentHit.AddDynamic(this,&AKeMuSanPawn::OnVehicleHit);
 	SetRootComponent(Root);
 
 	static ConstructorHelpers::FObjectFinder<UStaticMesh> CubeAsset(TEXT("/Engine/BasicShapes/Cube.Cube"));
@@ -389,6 +393,7 @@ void AKeMuSanPawn::CycleGearAuto()
 
 void AKeMuSanPawn::BeginPlay()
 {
+ Root->SetSimulatePhysics(true);
 	Super::BeginPlay();
 
 	// 创建后视镜 RenderTarget
@@ -458,6 +463,7 @@ void AKeMuSanPawn::CaptureAllMirrorsImmediate()
 void AKeMuSanPawn::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
+ SpeedMs=FVector::DotProduct(Root->GetPhysicsLinearVelocity(),GetActorForwardVector())*.01f;
 	if (Transmission == ETransmissionType::Auto)
 	{
 		UpdatePhysicsAuto(DeltaSeconds);
@@ -590,7 +596,10 @@ void AKeMuSanPawn::SelectGear(int32 GearIndex)
 void AKeMuSanPawn::ResetVehicle(const FVector& Loc, const FRotator& Rot)
 {
 	SetActorLocationAndRotation(Loc * 100.0f, Rot, false, nullptr, ETeleportType::TeleportPhysics);
-	SpeedMs = 0.f;
+	Root->SetPhysicsLinearVelocity(FVector::ZeroVector);
+ Root->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
+ LastVehicleHitTime=-1000.f;
+ SpeedMs = 0.f;
 	YawDeg = Rot.Yaw;
 	SteeringAngleDeg = 0.f;
 	EngineRpm = 900.f;
@@ -622,6 +631,8 @@ void AKeMuSanPawn::ResetVehicle(const FVector& Loc, const FRotator& Rot)
 
 void AKeMuSanPawn::ForceStop()
 {
+ Root->SetPhysicsLinearVelocity(FVector::ZeroVector);
+ Root->SetPhysicsAngularVelocityInRadians(FVector::ZeroVector);
 	SpeedMs = 0.f;
 	ThrottleInput = 0.f;
 }
@@ -861,6 +872,7 @@ void AKeMuSanPawn::UpdatePhysics(float DT)
 
 void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 {
+ const float BeforeSpeed=SpeedMs;
 	StallCooldown = FMath::Max(0.f, StallCooldown - DT);
 	if (bFlashHigh)
 	{
@@ -945,21 +957,8 @@ void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 	const float SteerStep = 130.f * DT;
 	SteeringAngleDeg = FMath::Clamp(TargetSteer, SteeringAngleDeg - SteerStep, SteeringAngleDeg + SteerStep);
 
-	// ---- 运动学（自行车模型） ----
-	const float Wheelbase = 2.6f;
-	const float SteerRad = FMath::DegreesToRadians(SteeringAngleDeg);
-	float YawDeltaDeg = 0.f;
-	if (FMath::Abs(SpeedMs) > 0.01f)
-	{
-		const float YawRate = SpeedMs / Wheelbase * FMath::Tan(SteerRad);
-		YawDeltaDeg = FMath::RadiansToDegrees(YawRate * DT);
-	}
-	YawDeg += YawDeltaDeg;
-
-	const FRotator NewRot(0.f, YawDeg, 0.f);
-	const FVector Fwd = NewRot.Vector();
-	FVector NewLoc = GetActorLocation() + Fwd * (SpeedMs * 100.0f * DT);
-	SetActorLocationAndRotation(NewLoc, NewRot, false);
+	const float YawDeltaDeg=FMath::FindDeltaAngleDegrees(YawDeg,GetActorRotation().Yaw);
+ ApplyPhysicalDrive(DT,BeforeSpeed,SpeedMs/2.6f*FMath::Tan(FMath::DegreesToRadians(SteeringAngleDeg)));
 
 	// ---- 转向灯回正自动取消 ----
 	if (bLeftSignal || bRightSignal)
@@ -998,6 +997,7 @@ void AKeMuSanPawn::UpdatePhysicsManual(float DT)
 // Automatic transmission physics: throttle auto-shifts, no stalling, brake/coast auto-downshifts
 void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 {
+ const float BeforeSpeed=SpeedMs;
 	// No stalling in auto mode
 	bStalled = false;
 	StallCooldown = FMath::Max(0.f, StallCooldown - DT);
@@ -1082,20 +1082,8 @@ void AKeMuSanPawn::UpdatePhysicsAuto(float DT)
 	const float SteerStep = 130.f * DT;
 	SteeringAngleDeg = FMath::Clamp(TargetSteer, SteeringAngleDeg - SteerStep, SteeringAngleDeg + SteerStep);
 
-	// ---- 运动学 ----
-	const float Wheelbase = 2.6f;
-	const float SteerRad = FMath::DegreesToRadians(SteeringAngleDeg);
-	float YawDeltaDeg = 0.f;
-	if (FMath::Abs(SpeedMs) > 0.01f)
-	{
-		const float YawRate = SpeedMs / Wheelbase * FMath::Tan(SteerRad);
-		YawDeltaDeg = FMath::RadiansToDegrees(YawRate * DT);
-	}
-	YawDeg += YawDeltaDeg;
-
-	const FRotator NewRot(0.f, YawDeg, 0.f);
-	const FVector Fwd = NewRot.Vector();
-	SetActorLocationAndRotation(GetActorLocation() + Fwd * (SpeedMs * 100.0f * DT), NewRot, false);
+	const float YawDeltaDeg=FMath::FindDeltaAngleDegrees(YawDeg,GetActorRotation().Yaw);
+ ApplyPhysicalDrive(DT,BeforeSpeed,SpeedMs/2.6f*FMath::Tan(FMath::DegreesToRadians(SteeringAngleDeg)));
 
 	// ---- 转向灯 ----
 	if (bLeftSignal || bRightSignal)
@@ -1172,4 +1160,19 @@ void AKeMuSanPawn::UpdateVisuals(float DT)
 	if (WheelFR) WheelFR->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
 	if (RimFL) RimFL->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
 	if (RimFR) RimFR->SetRelativeRotation(FRotator(0.f, SteeringAngleDeg, 90.f));
+}
+
+void AKeMuSanPawn::ApplyPhysicalDrive(float Dt,float Before,float YawRate)
+{
+ const float Acceleration=(SpeedMs-Before)/FMath::Max(.001f,Dt);
+ const bool Recovering=GetWorld()->GetTimeSeconds()-LastVehicleHitTime<.45f;
+ VehiclePhysics::Drive(Root,Recovering?0.f:Acceleration,Recovering?Root->GetPhysicsAngularVelocityInRadians().Z:YawRate,Dt,!Recovering);
+ SpeedMs=Before;
+ YawDeg=GetActorRotation().Yaw;
+}
+void AKeMuSanPawn::OnVehicleHit(UPrimitiveComponent*,AActor* Other,UPrimitiveComponent*,FVector Impulse,const FHitResult&)
+{
+ if(!Other || Other==this || Impulse.Size()<100.f)return;
+ LastVehicleHitTime=GetWorld()->GetTimeSeconds();
+ UE_LOG(LogTemp,Log,TEXT("[KeMuSanPhysics] vehicle_hit other=%s impulse=%.1f speed=%.2f yaw_rate=%.3f"),*Other->GetName(),Impulse.Size(),Root->GetPhysicsLinearVelocity().Size()*.01f,Root->GetPhysicsAngularVelocityInRadians().Z);
 }

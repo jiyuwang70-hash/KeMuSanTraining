@@ -234,6 +234,11 @@ void AKeMuSanHUD::DrawHUD()
 		DrawStepGuide(EC, Car);
 	}
 
+ if(Car && EC->IsPractice() && GetWorld()->GetTimeSeconds()-Car->GetLastVehicleHitTime()<2.f)
+ {
+  DrawTextWrapped(TEXT("发生车辆碰撞：松开油门，刹停后挂 R 挡倒车脱离"),420.f,235.f,440.f,2,FLinearColor(1.f,.55f,.2f),GEngine->GetMediumFont(),24.f);
+ }
+
 	// 5. 路线考点列表与得分面板
 	DrawProgressList(EC);
 	DrawScorePanel(EC);

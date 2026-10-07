@@ -31,7 +31,7 @@ namespace
 			FArchivePaths Value;
 			const TCHAR* CommandLine = FCommandLine::Get();
 			FString ExamStartMode;
-			const bool bTest = FParse::Param(CommandLine, TEXT("test-archive-analysis")) ||
+			const bool bTest = FParse::Param(CommandLine, TEXT("test-vehicle-physics")) || FParse::Param(CommandLine, TEXT("test-archive-analysis")) ||
 				FParse::Param(CommandLine, TEXT("test-archive-reload")) ||
 				FParse::Param(CommandLine, TEXT("test-route-geometry")) ||
 				FParse::Param(CommandLine, TEXT("test-input-chain")) ||

@@ -8,12 +8,12 @@
 
 namespace RoadLayout
 {
-	// ---- 道路横断面参数 ----
-	constexpr float LaneWidth = 3.5f;       // 单车道宽度
-	constexpr float RoadHalfWidth = 3.5f;   // 路面半宽（双向两车道共 7m）
-	constexpr float CurbDistance = 4.6f;    // 路缘石离中心线距离
+	// ---- 道路横断面参数（主路拓宽至 10m，双向各 5m）----
+	constexpr float LaneWidth = 5.0f;       // 单车道宽度（5m）
+	constexpr float RoadHalfWidth = 5.0f;   // 主路路面半宽（双向共 10m）
+	constexpr float CurbDistance = RoadHalfWidth + .17f;    // 路缘石离中心线距离（主路段）
 	constexpr float CarHalfWidth = 0.9f;    // 考试车半宽
-	constexpr float CornerRadius = 14.f;    // 转角路口转弯半径
+	constexpr float CornerRadius = 14.f;    // 转角路口中心线转弯半径（内弧9m/外弧19m，保障重卡平稳转弯）
 
 	// ---- 主线折线关键点 ----
 	// 东段 AB：y=0，x 从 -20 到 506，朝 +X

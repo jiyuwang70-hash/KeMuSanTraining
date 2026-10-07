@@ -7,6 +7,7 @@
 #include "KeMuSanGameMode.generated.h"
 
 class AController;
+class AAICar;
 class AExamController;
 
 UCLASS()
@@ -76,4 +77,14 @@ protected:
 	bool bShot5Ok = false;
 	bool bShot6Ok = false;
 	void TickShowcaseCapture(float DeltaSeconds);
+ void TickPhysicsVerification(float Dt);
+ bool bPhysicsVerification=false;
+ int32 PhysicsCase=-1,PhysicsFailures=0;
+ float PhysicsTime=0.f,PhysicsPeakSpeed=0.f,PhysicsPeakAngular=0.f;
+ float LightImpactSpeed=0.f;
+ UPROPERTY() AAICar* PhysicsA=nullptr;
+ UPROPERTY() AAICar* PhysicsB=nullptr;
+ FVector PhysicsOrigin=FVector::ZeroVector;
+ FString PhysicsScreenshot;
+
 };
